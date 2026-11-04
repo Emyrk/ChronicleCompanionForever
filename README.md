@@ -38,3 +38,7 @@ No configuration is required.
 ## Upload Logs
 
 View and upload your logs at **[forever.chronicleclassic.com](https://forever.chronicleclassic.com/?utm_source=github&utm_medium=referral&utm_campaign=log_upload&utm_content=readme_upload)**.
+
+## License
+
+Chronicle Companion Forever is available under the [MIT License](LICENSE).
