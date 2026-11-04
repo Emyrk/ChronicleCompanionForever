@@ -1,0 +1,6 @@
+## Interface: 16001
+## Title: Chronicle Companion Forever
+## Notes: Automatically manages advanced combat logging for non-battleground instances.
+## Version: 1.0.0
+
+ChronicleCompanionForever.lua
