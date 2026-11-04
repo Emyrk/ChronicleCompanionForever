@@ -1,0 +1,7 @@
+package-as: ChronicleCompanionForever
+
+ignore:
+  - .github
+  - assets
+  - tests
+  - README.md

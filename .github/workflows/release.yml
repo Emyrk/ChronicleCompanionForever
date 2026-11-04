@@ -1,0 +1,35 @@
+name: Package and release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Package and upload to CurseForge
+    runs-on: ubuntu-latest
+    env:
+      CF_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
+
+    steps:
+      - name: Check release configuration
+        run: |
+          if [ -z "$CF_API_KEY" ]; then
+            echo "Missing repository secret: CURSEFORGE_API_KEY" >&2
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Package and upload
+        uses: BigWigsMods/packager@v2
+        with:
+          args: -g forever

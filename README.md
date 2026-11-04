@@ -39,6 +39,14 @@ No configuration is required.
 
 View and upload your logs at **[forever.chronicleclassic.com](https://forever.chronicleclassic.com/?utm_source=github&utm_medium=referral&utm_campaign=log_upload&utm_content=readme_upload)**.
 
+## Releasing to CurseForge
+
+Version tags matching `v*`, such as `v1.0.0`, run the WoW Packager workflow and upload the packaged addon to CurseForge.
+
+The GitHub repository must define an Actions secret named `CURSEFORGE_API_KEY` containing a CurseForge API token. The CurseForge project ID, `1782636`, is configured in the addon TOC file.
+
+The workflow can also be started manually from the GitHub Actions page.
+
 ## License
 
 Chronicle Companion Forever is available under the [MIT License](LICENSE).
