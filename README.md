@@ -17,6 +17,7 @@ Chronicle Companion Forever starts and stops combat logging automatically so you
 - Logs dungeons, raids, arenas, scenarios, and other non-battleground instances.
 - Does not record battlegrounds.
 - Retries after loading screens when WoW Forever temporarily ignores a logging request.
+- Shows a green minimap icon while recording and a red icon when not recording.
 
 Combat logs are written to the game's normal `Logs/WoWCombatLog.txt` location.
 
@@ -34,6 +35,14 @@ Download it from the **[Chronicle Sidekick releases page](https://github.com/Emy
 4. Enable **Chronicle Companion Forever** from the AddOns menu.
 
 No configuration is required.
+
+### Minimap icon
+
+The minimap icon uses the green/red textures from [Chronicle Companion WoTLK](https://github.com/Emyrk/ChronicleCompanionWoTLK). It reflects the actual combat-logging state and updates automatically.
+
+- **Ctrl-click** the icon to hide it without stopping recording.
+- Use **`/clog minimap`** to show or hide it again (`/chronicle minimap` also works).
+- Visibility is saved across reloads and logins (account-wide).
 
 ## Upload Logs
 
