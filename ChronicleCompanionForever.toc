@@ -2,6 +2,7 @@
 ## Title: Chronicle Companion Forever
 ## Notes: Automatically manages advanced combat logging for non-battleground instances.
 ## Version: 1.0.0
+## IconTexture: Interface\AddOns\ChronicleCompanionForever\Media\icon
 ## X-Curse-Project-ID: 1782636
 
 ChronicleCompanionForever.lua
