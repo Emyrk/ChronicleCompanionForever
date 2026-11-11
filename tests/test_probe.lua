@@ -38,7 +38,7 @@ end
 assert(frame.events.PLAYER_LOGIN)
 assert(frame.events.PLAYER_LOGOUT)
 assert(frame.events.UI_ERROR_MESSAGE)
-assert(frame.events.COMBAT_LOG_EVENT_UNFILTERED)
+assert(not frame.events.COMBAT_LOG_EVENT_UNFILTERED)
 assert(SLASH_CHRONFOREVERPROBE1 == "/cfprobe")
 assert(type(SlashCmdList.CHRONFOREVERPROBE) == "function")
 
@@ -103,13 +103,6 @@ assert(timers[1].delay == 1)
 assert(lastMessage():find("waiting one second", 1, true))
 frame.OnEvent(frame, "UI_ERROR_MESSAGE", 57, SPELL_FAILED_MOVING)
 assert(#timers == 1, "duplicate UI events must not schedule duplicate advancement")
-
-frame.OnEvent(frame, "COMBAT_LOG_EVENT_UNFILTERED",
-	123.4, "SPELL_CAST_FAILED", false,
-	"source-guid", "Source", 0, 0,
-	nil, nil, 0, 0,
-	591, "Smite", 2, "CHRON_SEQ_001_OF_003")
-assert(lastMessage():find("CLEU observed CHRON_SEQ_001_OF_003", 1, true))
 
 timers[1].callback()
 assert(SPELL_FAILED_MOVING == "CHRON_SEQ_002_OF_003")

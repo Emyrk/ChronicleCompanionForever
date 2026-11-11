@@ -157,35 +157,9 @@ local function reportUIError(errorType, errorText)
 	end
 end
 
-local function packEventArgs(...)
-	return { n = select("#", ...), ... }
-end
-
-local function reportCombatLogEvent(...)
-	local eventArgs = packEventArgs(...)
-
-	if eventArgs.n == 0 and type(CombatLogGetCurrentEventInfo) == "function" then
-		eventArgs = packEventArgs(CombatLogGetCurrentEventInfo())
-	end
-
-	local subevent = eventArgs[2]
-	if subevent ~= "SPELL_CAST_FAILED" then
-		return
-	end
-
-	for index = 1, eventArgs.n do
-		local value = eventArgs[index]
-		if type(value) == "string" and value:find("^CHRON_") then
-			message("CLEU observed " .. value .. ".")
-			return
-		end
-	end
-end
-
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("PLAYER_LOGOUT")
 frame:RegisterEvent("UI_ERROR_MESSAGE")
-frame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 
 frame:SetScript("OnEvent", function(_, event, ...)
 	if event == "PLAYER_LOGIN" then
@@ -200,8 +174,6 @@ frame:SetScript("OnEvent", function(_, event, ...)
 		restore()
 	elseif event == "UI_ERROR_MESSAGE" then
 		reportUIError(...)
-	elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
-		reportCombatLogEvent(...)
 	end
 end)
 

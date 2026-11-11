@@ -121,13 +121,7 @@ If automatic advancement is unavailable or an attempt does not produce a UI even
 /cfprobe next
 ```
 
-The probe also listens for `COMBAT_LOG_EVENT_UNFILTERED`. If Forever exposes the marked failed-cast event to addon Lua, chat prints:
-
-```text
-[ChronProbe] CLEU observed CHRON_SEQ_001_OF_010.
-```
-
-This is a diagnostic signal, not absolute proof that the row was flushed to disk. After the sequence, stop logging and search the file for `CHRON_SEQ_`. Compare the numbered UI attempts, any `CLEU observed` messages, and the markers actually present on disk. Missing numbers show exactly which deliveries were lost, while repeated numbers reveal duplicate rows.
+Forever blocks third-party addons from registering `COMBAT_LOG_EVENT_UNFILTERED`, so the addon cannot observe whether a matching combat-log event was generated. After the sequence, stop logging and search the file for `CHRON_SEQ_`. Compare the numbered UI attempts with the markers actually present on disk. Missing numbers show exactly which deliveries were lost, while repeated numbers reveal duplicate rows.
 
 ## Upload Logs
 
