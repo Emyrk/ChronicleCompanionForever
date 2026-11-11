@@ -75,6 +75,36 @@ Select-String -Path .\Logs\WoWCombatLog*.txt `
 
 The probe intentionally has no UI suppression, compression, framing, combat-log listeners, or chunking.
 
+### Payload-length experiment
+
+After confirming the short marker, test exact payload lengths with:
+
+```text
+/cfprobe length 64
+/cfprobe length 128
+/cfprobe length 256
+/cfprobe length 512
+/cfprobe length 1024
+```
+
+The command accepts any whole number from 32 through 4096. It creates an ASCII payload of exactly that length with a recognizable prefix and ending marker. For example, a 512-byte payload starts with `CHRON_LEN_0512|` and ends with `|END_0512`.
+
+For each length:
+
+1. Run `/cfprobe length <bytes>`.
+2. Trigger one moving cast failure.
+3. Read the automatic `UI_ERROR_MESSAGE` report in chat.
+4. Run `/cfprobe restore` immediately.
+5. Search the combat log for `CHRON_LEN_` and confirm the ending marker is present.
+
+A complete UI delivery reports values like:
+
+```text
+[ChronProbe] UI_ERROR_MESSAGE type=57 length=512 expected=512 exact=true end=true
+```
+
+`exact=false` or `end=false` indicates that the UI event payload changed or was truncated. The combat-log field must be checked separately because its limit may differ from the UI event limit. Duplicate reports are expected because Forever can emit the same failed-cast event more than once.
+
 ## Upload Logs
 
 View and upload your logs at **[forever.chronicleclassic.com](https://forever.chronicleclassic.com/?utm_source=github&utm_medium=referral&utm_campaign=log_upload&utm_content=readme_upload)**.
