@@ -1,0 +1,5 @@
+## Interface: 16001
+## Title: Chronicle Forever Transport Probe
+## Notes: Tests SPELL_FAILED_MOVING combat-log provenance
+
+ChronForeverProbe.lua
