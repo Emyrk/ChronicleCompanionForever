@@ -19,6 +19,13 @@ function DEFAULT_CHAT_FRAME:AddMessage(text)
 	table.insert(messages, text)
 end
 
+local timers = {}
+C_Timer = {}
+
+function C_Timer.After(delay, callback)
+	table.insert(timers, { delay = delay, callback = callback })
+end
+
 SlashCmdList = {}
 SPELL_FAILED_MOVING = "Can't do that while moving"
 
@@ -31,6 +38,7 @@ end
 assert(frame.events.PLAYER_LOGIN)
 assert(frame.events.PLAYER_LOGOUT)
 assert(frame.events.UI_ERROR_MESSAGE)
+assert(frame.events.COMBAT_LOG_EVENT_UNFILTERED)
 assert(SLASH_CHRONFOREVERPROBE1 == "/cfprobe")
 assert(type(SlashCmdList.CHRONFOREVERPROBE) == "function")
 
@@ -81,6 +89,44 @@ SlashCmdList.CHRONFOREVERPROBE("length 4097")
 assert(SPELL_FAILED_MOVING == "Can't do that while moving")
 assert(lastMessage():find("32 to 4096", 1, true))
 
+SlashCmdList.CHRONFOREVERPROBE("sequence 3")
+assert(SPELL_FAILED_MOVING == "CHRON_SEQ_001_OF_003")
+assert(lastMessage():find("Trigger one moving cast failure", 1, true))
+
+SlashCmdList.CHRONFOREVERPROBE("status")
+assert(lastMessage():find("sequence=1/3", 1, true))
+assert(lastMessage():find("pending=false", 1, true))
+
+frame.OnEvent(frame, "UI_ERROR_MESSAGE", 57, SPELL_FAILED_MOVING)
+assert(#timers == 1)
+assert(timers[1].delay == 1)
+assert(lastMessage():find("waiting one second", 1, true))
+frame.OnEvent(frame, "UI_ERROR_MESSAGE", 57, SPELL_FAILED_MOVING)
+assert(#timers == 1, "duplicate UI events must not schedule duplicate advancement")
+
+frame.OnEvent(frame, "COMBAT_LOG_EVENT_UNFILTERED",
+	123.4, "SPELL_CAST_FAILED", false,
+	"source-guid", "Source", 0, 0,
+	nil, nil, 0, 0,
+	591, "Smite", 2, "CHRON_SEQ_001_OF_003")
+assert(lastMessage():find("CLEU observed CHRON_SEQ_001_OF_003", 1, true))
+
+timers[1].callback()
+assert(SPELL_FAILED_MOVING == "CHRON_SEQ_002_OF_003")
+
+SlashCmdList.CHRONFOREVERPROBE("next")
+assert(SPELL_FAILED_MOVING == "CHRON_SEQ_003_OF_003")
+
+frame.OnEvent(frame, "UI_ERROR_MESSAGE", 57, SPELL_FAILED_MOVING)
+assert(#timers == 2)
+timers[2].callback()
+assert(SPELL_FAILED_MOVING == "Can't do that while moving")
+assert(lastMessage():find("Restored", 1, true))
+
+SlashCmdList.CHRONFOREVERPROBE("sequence 101")
+assert(SPELL_FAILED_MOVING == "Can't do that while moving")
+assert(lastMessage():find("1 to 100", 1, true))
+
 SlashCmdList.CHRONFOREVERPROBE("ARM")
 assert(SPELL_FAILED_MOVING == "CHRON_PROBE_A")
 frame.OnEvent(frame, "PLAYER_LOGOUT")
@@ -92,7 +138,8 @@ assert(SPELL_FAILED_MOVING == nil)
 assert(lastMessage():find("missing or is not a string", 1, true))
 
 SlashCmdList.CHRONFOREVERPROBE("")
-assert(messages[#messages - 2]:find("/cfprobe length", 1, true))
+assert(messages[#messages - 4]:find("/cfprobe length", 1, true))
+assert(messages[#messages - 3]:find("/cfprobe sequence", 1, true))
 assert(lastMessage():find("/cfprobe status", 1, true))
 
 print("probe behavior tests passed")

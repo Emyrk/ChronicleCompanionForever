@@ -105,6 +105,30 @@ A complete UI delivery reports values like:
 
 `exact=false` or `end=false` indicates that the UI event payload changed or was truncated. The combat-log field must be checked separately because its limit may differ from the UI event limit. Duplicate reports are expected because Forever can emit the same failed-cast event more than once.
 
+### Numbered delivery-rate experiment
+
+Use a numbered sequence to identify exactly which attempts reach the disk log:
+
+```text
+/cfprobe sequence 10
+```
+
+The first marker is `CHRON_SEQ_001_OF_010`. Trigger one moving cast failure while standing still first, then wait for the addon to print the next marker before trying again. A matching `UI_ERROR_MESSAGE` schedules advancement after one second, and duplicate UI events do not advance the sequence twice. The final observed UI attempt restores `SPELL_FAILED_MOVING` automatically.
+
+If automatic advancement is unavailable or an attempt does not produce a UI event, use:
+
+```text
+/cfprobe next
+```
+
+The probe also listens for `COMBAT_LOG_EVENT_UNFILTERED`. If Forever exposes the marked failed-cast event to addon Lua, chat prints:
+
+```text
+[ChronProbe] CLEU observed CHRON_SEQ_001_OF_010.
+```
+
+This is a diagnostic signal, not absolute proof that the row was flushed to disk. After the sequence, stop logging and search the file for `CHRON_SEQ_`. Compare the numbered UI attempts, any `CLEU observed` messages, and the markers actually present on disk. Missing numbers show exactly which deliveries were lost, while repeated numbers reveal duplicate rows.
+
 ## Upload Logs
 
 View and upload your logs at **[forever.chronicleclassic.com](https://forever.chronicleclassic.com/?utm_source=github&utm_medium=referral&utm_campaign=log_upload&utm_content=readme_upload)**.
