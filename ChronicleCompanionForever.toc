@@ -9,3 +9,5 @@
 ChronicleCompanionForever.lua
 MinimapButton.lua
 ScoutingStorage.lua
+
+ScoutingRoster.lua
