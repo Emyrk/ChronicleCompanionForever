@@ -11,3 +11,4 @@ MinimapButton.lua
 ScoutingStorage.lua
 
 ScoutingRoster.lua
+ScoutingNearby.lua
