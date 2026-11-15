@@ -8,3 +8,4 @@
 
 ChronicleCompanionForever.lua
 MinimapButton.lua
+ScoutingStorage.lua
