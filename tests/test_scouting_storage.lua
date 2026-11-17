@@ -68,4 +68,32 @@ assert(s.players.a and #s.players.a.At == 0)
 s:Observe('a', 'A', 26, '', true, 90001)
 assert(s.players.a.At[1] == 90001 and s.players.a.Levels[1] == 26)
 assert(s.players.a.Guilds[1] == '')
+-- GC cursor wraps through holes; exact age boundary retains data.
+s = New({sidekick_enabled = true})
+s:Observe('a', 'A', 1, '', false, 10)
+s.gc = 1000; s:Collect(86410, 2)
+assert(s.gc == 2 and s.players.a and s.players.a.At[1] == 10)
+s.gc = 1; s:Collect(86411, 1); assert(not s.players.a and s.gc == 2)
+-- Recent former-party fallback is used only when every other slot is protected.
+s = New({sidekick_enabled = true})
+local protected = {}
+for i = 1, 1000 do
+ local id = tostring(i)
+ s:Observe(id, 'P', 1, '', true, 100000)
+ protected[id] = i ~= 500
+end
+s:SetCurrent(protected)
+s:Observe('500', 'P', 1, '', false, 100001)
+assert(s.players['500'].LastGrouped == 100000)
+assert(s:Observe('new', 'P', 1, '', true, 100002) and not s.players['500'])
+-- Ack works with recording disabled, clearing every colliding row.
+local ackDB = {sidekick_enabled = false, scouting_ack = 100002, scouting = s.db.scouting}
+local cleaned = New(ackDB)
+assert(next(cleaned.players) == nil and ackDB.sidekick_enabled == false)
+-- Invalid ack does not prune and malformed sparse arrays remain untouched.
+local noAck = {sidekick_enabled=true, scouting_ack='100'}
+s = New(noAck); s:Observe('a', 'A', false, false, false, 1)
+s = New(noAck); assert(s.players.a.At[1] == 1)
+local sparse = s.players.a; sparse.At[3] = 3
+assert(New(noAck).blocked and sparse.At[3] == 3)
 print('scouting storage tests passed')

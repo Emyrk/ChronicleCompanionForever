@@ -1,6 +1,6 @@
 # SavedVariables scouting
 
-Status: agreed design for future implementation, not a shipped feature. This document changes no addon behavior. The experimental failed-cast probe is not part of this design or the production feature set.
+Status: implemented in the addon with deterministic mock coverage; live Forever API validation remains required before release. The experimental failed-cast probe is not part of this design or the production feature set.
 
 ## Scope and integration
 
@@ -104,7 +104,7 @@ When GC frees a slot, point the insertion cursor there. After insertion, advance
 
 ## Deferred decisions and validation
 
-- Per-player observation-count and byte-size caps remain deferred. The 1,000-player and 24-hour policies below bound player count and history age, not total bytes. GC scheduling budgets remain tuning decisions.
+- Per-player observation-count and byte-size caps remain deferred. The 1,000-player and 24-hour policies above bound player count and history age, not total bytes. GC scheduling budgets remain tuning decisions.
 - Validate Forever's actual roster enumeration, GUID/name, level, guild, Unix-time, and event APIs before implementation. Candidate lifecycle events include `ADDON_LOADED`, `PLAYER_ENTERING_WORLD`, and the client's supported roster-change events. This document makes no claim of tested Forever API support.
 - Verify how the client distinguishes known guildless from unavailable guild data, handles temporarily unresolved roster members, and exposes reliable group departure. Choose event subscriptions and any bounded retries from that evidence.
 - Unknown schema versions or malformed aligned arrays must be preserved without recording into or pruning the affected data; report the unsupported state rather than silently resetting it. Confirm the proposed collection/unknown/membership encodings during storage review. Future talents and battleground collections require their own contracts.
@@ -116,3 +116,53 @@ When GC frees a slot, point the insertion cursor there. After insertion, advance
 3. **Roster + tests:** validated API adapter; party/raid snapshots and reconciliation; joins, departures, level/guild changes, unresolved units, party-to-raid transitions, disabled recording, and reload without fabricated leaves. Keep combat logging behavior unchanged. Validate client behavior separately from mocked unit tests.
 
 4. **Nearby + tests:** persisted default-off opt-in; validated observable-unit adapters; free-slot-only admission; existing-player updates and party promotion.
+
+## Implementation and local checks
+
+Storage and roster collection now implement this contract. `scouting.Version = 1`
+is written for new stores; the unversioned example above is also accepted. An
+unknown version, malformed player, or imported store above 1,000 players makes
+the entire scouting store read-only with a chat warning. This conservative
+policy preserves affected data and avoids partial cleanup. Other addon settings
+and combat logging remain independent.
+
+The adapter uses conventional modern roster APIs, with legacy party/raid count
+fallbacks when `IsInRaid` is unavailable. Event registration is guarded for
+client differences. Remote nil guild results remain unknown (`false`); only a
+successful local `IsInGuild() == false` confirms guildlessness. Missing identities
+make a roster snapshot incomplete, so it cannot produce departures. A valid
+count of zero confirms solo. Name labels require an observed realm or the local
+realm API. None of these APIs have been verified on a live Forever client here.
+
+Sidekick must set `ChronicleCompanionForeverDB.sidekick_enabled = true` while WoW
+is closed to opt in. The addon never enables that flag itself. Any other value
+turns recording off. Acknowledgement pruning on load and incremental GC still
+run while recording is disabled, without collecting fresh observations. GC
+visits 10 slots every 10 seconds, with no catch-up loop after stalled frames.
+
+Run deterministic Lua 5.1 mocks from the repository root:
+
+```sh
+nix shell nixpkgs#lua5_1 -c sh -c 'for test in tests/test_*.lua; do lua "$test" || exit; done'
+```
+
+Mocks verify state transitions and storage invariants, not live client API
+availability. Before release, test login/reload, party/raid conversion, remote
+unit availability, guild queries, and long-session GC on Forever.
+
+### Nearby opt-in
+
+`/clog scout` (also `/chronicle scout`) toggles the persisted nearby preference, which defaults to off.
+It does not enable Sidekick recording. Disabling it stops collection and leaves
+history intact. Collection observes target changes, mouseover updates, and
+supported nameplate add/remove events. There is no scan of arbitrary players,
+combat-log event hook, inspection request, or protected action.
+
+The nearby adapter requires working `UnitInParty` and `UnitInRaid` calls and a
+complete roster before asserting out-of-group membership. If membership differs
+from the reconciled roster, it skips the sighting until reconciliation. Missing
+APIs or identities produce no row. GC can refresh still-observable admitted
+nearby units, but validates their current GUID to avoid unit-token reuse. An
+unchanged sighting refreshes `LastSeen`, never former-group `LastGrouped`.
+Validate target/mouseover/nameplate events and unit membership APIs on Forever;
+nameplate support is optional and guarded, not assumed to work on that client.
