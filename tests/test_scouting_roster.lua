@@ -54,4 +54,35 @@ assert(ChronicleCompanionForeverDB.minimapHidden)
 -- Missing APIs do not throw or manufacture a departure.
 GetNumSubgroupMembers = nil
 r:Reconcile(); assert(r.members.friend)
+-- Model secret API returns with tagged primitive values. Older clients above
+-- run without issecretvalue; modern clients must discard secrets at the boundary.
+local secret = 'secret-value'
+function issecretvalue(value) return value == secret end
+for _, api in ipairs({'UnitIsPlayer', 'UnitGUID', 'UnitName', 'GetRealmName'}) do
+ local original, originalName = _G[api], UnitName
+ if api == 'GetRealmName' then UnitName = function() return 'friend', '' end end
+ _G[api] = function() return secret end
+ assert(r:Read('party1') == nil, api .. ' secret must prevent observation')
+ _G[api], UnitName = original, originalName
+end
+local originalName = UnitName
+UnitName = function() return 'friend', secret end
+assert(r:Read('party1') == nil, 'secret realm must prevent observation')
+UnitName = originalName
+for _, api in ipairs({'UnitLevel', 'GetGuildInfo'}) do
+ local original = _G[api]
+ _G[api] = function() return secret end
+ local o = assert(r:Read('party1'))
+ assert(o[api == 'UnitLevel' and 'level' or 'guild'] == false)
+ _G[api] = original
+end
+GetNumSubgroupMembers = function() return secret end
+r:Reconcile(); assert(r.members.friend and not r.complete)
+local originalGUID = UnitGUID
+GetNumSubgroupMembers = function() return 1 end
+UnitGUID = function() return secret end
+local rows = #p.friend.At
+r:Reconcile()
+assert(r.members.friend and not r.complete and #p.friend.At == rows, 'secret identity must not manufacture departures')
+UnitGUID = originalGUID
 print('scouting roster tests passed')

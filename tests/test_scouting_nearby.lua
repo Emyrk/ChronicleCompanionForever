@@ -44,6 +44,23 @@ frames[2].OnEvent(frames[2], 'NAME_PLATE_UNIT_ADDED', 'nameplate1')
 assert(n.byGUID.other == 'nameplate1')
 frames[2].OnEvent(frames[2], 'NAME_PLATE_UNIT_REMOVED', 'nameplate1')
 assert(not n.byGUID.other)
+-- Secret identity and membership results must not reach storage or tracking.
+local secret = 'secret-value'
+function issecretvalue(value) return value == secret end
+local originalGUID = UnitGUID
+units.nameplate2 = 'secret-player'
+UnitGUID = function(u) if u == 'nameplate2' then return secret end; return originalGUID(u) end
+frames[2].OnEvent(frames[2], 'NAME_PLATE_UNIT_ADDED', 'nameplate2')
+assert(not n.byUnit.nameplate2 and not r.store.players[secret])
+UnitGUID = originalGUID
+for _, api in ipairs({'UnitInParty', 'UnitInRaid'}) do
+ local original = _G[api]
+ _G[api] = function() return secret end
+ n:Observe('target')
+ assert(not n.byGUID.other and not n.byUnit.target, api .. ' secret must prevent observation')
+ _G[api] = original
+end
+n:Observe('target'); assert(n.byGUID.other == 'target')
 -- Optional APIs missing or throwing cannot invent observations.
 UnitInParty = nil
 n:Observe('target'); assert(not n.byGUID.other)

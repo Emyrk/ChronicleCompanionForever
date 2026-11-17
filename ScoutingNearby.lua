@@ -21,6 +21,8 @@ function nearby:Read(unit)
 	local partyOK, party = pcall(UnitInParty, unit)
 	local raidOK, raid = pcall(UnitInRaid, unit)
 	if not partyOK or not raidOK then return nil end
+	-- Secret membership is unknown, not evidence that a unit is ungrouped.
+	if type(issecretvalue) == "function" and (issecretvalue(party) or issecretvalue(raid)) then return nil end
 	local grouped = (party ~= nil and party ~= false) or (raid ~= nil and raid ~= false)
 	if grouped ~= (roster.members[o.guid] == true) then return nil end
 	if not grouped and not roster.complete then return nil end

@@ -5,7 +5,12 @@ addon.ScoutingRoster = roster
 local function call(name, ...)
 	if type(_G[name]) ~= "function" then return nil end
 	local ok, a, b = pcall(_G[name], ...)
-	if ok then return a, b end
+	-- pcall catches API errors, but successful calls can still return secret
+	-- values. Never let those reach comparisons, concatenation or table keys.
+	if ok then
+		if type(issecretvalue) == "function" and (issecretvalue(a) or issecretvalue(b)) then return nil end
+		return a, b
+	end
 end
 roster.Call = call
 local function now() return call("time") end
