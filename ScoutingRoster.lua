@@ -4,18 +4,38 @@ local roster = { members = {}, units = {} }
 addon.ScoutingRoster = roster
 local function call(name, ...)
 	if type(_G[name]) ~= "function" then return nil end
-	local ok, a, b = pcall(_G[name], ...)
+	local ok, a, b, c, d, e, f, g = pcall(_G[name], ...)
 	-- pcall catches API errors, but successful calls can still return secret
 	-- values. Never let those reach comparisons, concatenation or table keys.
 	if ok then
-		if type(issecretvalue) == "function" and (issecretvalue(a) or issecretvalue(b)) then return nil end
-		return a, b
+		if type(issecretvalue) == "function" and (issecretvalue(a) or issecretvalue(b) or issecretvalue(c)
+			or issecretvalue(d) or issecretvalue(e) or issecretvalue(f) or issecretvalue(g)) then return nil end
+		return a, b, c, d, e, f, g
 	end
 end
 roster.Call = call
 local function now() return call("time") end
 local function report(message)
 	if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("Chronicle: " .. message) end
+end
+local function identity(unit, guid)
+	-- Forever's UnitName second return is not reliable realm metadata. Keep
+	-- the existing Name label unchanged, and obtain Realm independently.
+	local _, _, _, guidRace, _, _, realm = call("GetPlayerInfoByGUID", guid)
+	if type(realm) ~= "string" or realm == "" then
+		realm = nil
+		local playerGUID = call("UnitGUID", "player")
+		if call("UnitIsUnit", unit, "player") == true or guid == playerGUID then
+			realm = call("GetRealmName")
+		end
+	end
+	if type(realm) ~= "string" or realm == "" then realm = nil end
+	local _, race = call("UnitRace", unit)
+	if type(race) ~= "string" or race == "" then race = guidRace end
+	if type(race) ~= "string" or race == "" then race = nil end
+	local gender = call("UnitSex", unit)
+	if gender ~= 1 and gender ~= 2 and gender ~= 3 then gender = nil end
+	return realm, race, gender
 end
 function roster:Read(unit)
 	if call("UnitIsPlayer", unit) ~= true then return nil end
@@ -31,7 +51,9 @@ function roster:Read(unit)
 	-- Nil GetGuildInfo is ambiguous for remote units. Only IsInGuild for the
 	-- local player can confirm guildless without inventing remote knowledge.
 	if guild == false and call("UnitIsUnit", unit, "player") == true and call("IsInGuild") == false then guild = "" end
-	return { guid = guid, name = name .. "-" .. realm, level = level, guild = guild, unit = unit, grouped = true }
+	local playerRealm, race, gender = identity(unit, guid)
+	return { guid = guid, name = name .. "-" .. realm, level = level, guild = guild, unit = unit, grouped = true,
+		realm = playerRealm, race = race, gender = gender }
 end
 local function count(v, max)
 	return type(v) == "number" and v >= 0 and v <= max and v == math.floor(v)
@@ -86,7 +108,7 @@ function roster:Reconcile()
 		for guid in pairs(self.members) do if not current[guid] then store:Leave(guid, at); self.units[guid] = nil end end
 	end
 	for guid, o in pairs(snapshot) do
-		store:Observe(guid, o.name, o.level, o.guild, true, at, not self.members[guid])
+		store:Observe(guid, o.name, o.level, o.guild, true, at, not self.members[guid], o)
 		self.units[guid] = o.unit
 	end
 	self.members, self.complete = current, complete
