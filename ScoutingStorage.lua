@@ -6,6 +6,16 @@ local fields = { "Levels", "Guilds", "Party" }
 local function timestamp(v)
 	return type(v) == "number" and v >= 0 and v < math.huge and v == math.floor(v)
 end
+-- Shared mutation marker for collectors. Timestamps are wall-clock seconds,
+-- not sequence numbers: multiple writes in one second can have the same value.
+function Storage.TouchCollections(db, at)
+	if at == nil and type(time) == "function" then
+		local ok, value = pcall(time)
+		if ok then at = value end
+	end
+	if type(issecretvalue) == "function" and issecretvalue(at) then return end
+	if timestamp(at) then db.collections.last_updated = at end
+end
 local function dense(a)
 	if type(a) ~= "table" then return nil end
 	local count = 0
@@ -51,7 +61,13 @@ local function compact(p, keep)
 			end
 		end
 	end
-	p.At, p.Levels, p.Guilds, p.Party = out.At, out.Levels, out.Guilds, out.Party
+	local changed = #out.At ~= #p.At
+	for i, at in ipairs(out.At) do
+		if p.At[i] ~= at then changed = true end
+		for _, f in ipairs(fields) do if p[f][i] ~= out[f][i] then changed = true end end
+	end
+	if changed then p.At, p.Levels, p.Guilds, p.Party = out.At, out.Levels, out.Guilds, out.Party end
+	return changed
 end
 local function last(p)
 	local values = {}
@@ -73,7 +89,10 @@ function Storage.New(db, report)
 	-- Each collector owns only its entry; preserve unknown sibling collections.
 	if db.collections == nil then db.collections = {} end
 	if type(db.collections) ~= "table" then return reject() end
-	if db.collections.scouting == nil then db.collections.scouting = { Version = 1, Players = {} } end
+	if db.collections.scouting == nil then
+		db.collections.scouting = { Version = 1, Players = {} }
+		Storage.TouchCollections(db)
+	end
 	local s = db.collections.scouting
 	if type(s) ~= "table" or (s.Version ~= nil and s.Version ~= 1) or type(s.Players) ~= "table" then return reject() end
 	local keys = {}
@@ -90,12 +109,13 @@ function Storage.New(db, report)
 end
 function methods:Enabled() return not self.blocked and self.db.sidekick_enabled == true end
 function methods:SetCurrent(current) self.current = current end
-function methods:Remove(guid)
+function methods:Remove(guid, at)
 	local slot = self.lookup[guid]
 	if slot then
 		self.slots[slot], self.lookup[guid], self.players[guid] = nil, nil, nil
 		self.insert = slot
 		self.latest[guid] = nil
+		Storage.TouchCollections(self.db, at)
 	end
 end
 function methods:Slot(grouped, now)
@@ -119,7 +139,7 @@ function methods:Observe(guid, name, level, guild, grouped, now, force)
 	if not p then
 		local slot = self:Slot(grouped, now)
 		if not slot then return false end
-		if self.slots[slot] then self:Remove(self.slots[slot]) end
+		if self.slots[slot] then self:Remove(self.slots[slot], now) end
 		p = { Name = name, At = {}, Levels = {}, Guilds = {}, Party = {} }
 		self.players[guid], self.slots[slot], self.lookup[guid] = p, guid, slot
 		self.insert = slot % CAPACITY + 1
@@ -128,6 +148,7 @@ function methods:Observe(guid, name, level, guild, grouped, now, force)
 			if not self.slots[nextSlot] then self.insert = nextSlot; break end
 		end
 	end
+	local edited = p.Name ~= name or p.LastSeen ~= now or (grouped and p.LastGrouped ~= now)
 	p.Name, p.LastSeen = name, now
 	if grouped then p.LastGrouped = now end
 	local before = self.latest[guid] or last(p)
@@ -143,6 +164,7 @@ function methods:Observe(guid, name, level, guild, grouped, now, force)
 		for _, f in ipairs(fields) do p[f][n] = n > 1 and before[f] == values[f] and "_" or values[f] end
 	end
 	self.latest[guid] = values
+	if edited or changed then Storage.TouchCollections(self.db, now) end
 	return true
 end
 function methods:Leave(guid, now)
@@ -163,13 +185,13 @@ function methods:Collect(now, budget, refresh)
 			local observed = self:Enabled() and refresh and refresh(guid)
 			if observed then self:Observe(guid, observed.name, observed.level, observed.guild, observed.grouped, now, false) end
 			if not self.current[guid] and now - p.LastSeen > AGE then
-				self:Remove(guid)
+				self:Remove(guid, now)
 			else
-				compact(p, function(at) return now - at <= AGE end)
+				if compact(p, function(at) return now - at <= AGE end) then Storage.TouchCollections(self.db, now) end
 				self.latest[guid] = nil
 				if #p.At == 0 then
 					if observed then self:Observe(guid, observed.name, observed.level, observed.guild, observed.grouped, now, true)
-					elseif not self.current[guid] then self:Remove(guid) end
+					elseif not self.current[guid] then self:Remove(guid, now) end
 				end
 			end
 		end

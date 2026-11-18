@@ -18,6 +18,7 @@ ChronicleCompanionForeverDB = {
     sidekick_enabled = true,
     scouting_nearby_enabled = false, -- persisted user preference
     collections = {
+        last_updated = 1700000020, -- Unix seconds of the latest persisted change
         scouting = {
             Version = 1,
             Players = {
@@ -47,6 +48,14 @@ ChronicleCompanionForeverDB = {
 - The first row of every player entry must contain explicit level, guild, and membership values, using unknown markers for unavailable level or guild data. Membership is always explicitly in-group or out-of-group; unknown membership produces no row. It must decode without earlier data. Every later row must decode by walking forward from that row.
 
 The collection path is `ChronicleCompanionForeverDB.collections.scouting`. The aligned arrays, GUID keys, identity label, literal unchanged marker, and self-contained retained history are the storage requirements.
+
+### Collection mutation timestamp
+
+`collections.last_updated` is shared metadata, not a dataset. It holds the Unix timestamp in seconds of the latest persisted collection mutation: initialization, additions, metadata/liveness edits, observation rows, removals, evictions, and retention compaction. No-op reads, reloads, rejected writes, settings changes outside `collections`, and GC passes that change no persisted data leave it unchanged. If the game clock is unavailable or secret, preserve the previous marker rather than persisting an invalid timestamp.
+
+Scouting updates this marker through `addon.ScoutingStorage.TouchCollections(db, at)`. Future collectors must call the same helper after mutating their own collection; omit `at` to use the game clock. This is explicit mutation tracking, not interception of arbitrary Lua table writes. The marker itself does not trigger another update.
+
+The marker is wall-clock time, not a sequence number or upload acknowledgement: writes in the same second can share a timestamp, and clock corrections can move it backwards. Sidekick must not use it alone to prove a snapshot is unchanged. When enumerating datasets, skip the scalar `last_updated` field; capture it along with the complete container. Clearing `collections` also clears this metadata, and the addon stamps its next initialization.
 
 ## Observation behavior
 
