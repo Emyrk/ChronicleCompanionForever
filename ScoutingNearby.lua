@@ -36,7 +36,7 @@ function nearby:Observe(unit)
 	-- Nearby admission always uses free space, even if a group unit is seen
 	-- before the roster has admitted it. The roster owns group admission.
 	if not roster.store.players[o.guid] and not roster.store:Slot(false, roster.Call("time")) then return end
-	if roster.store:Observe(o.guid, o.name, o.level, o.guild, o.grouped, roster.Call("time"), false) then
+	if roster.store:Observe(o.guid, o.name, o.level, o.guild, o.grouped, roster.Call("time"), false, o) then
 		local old = self.byGUID[o.guid]
 		if old then self.byUnit[old] = nil end
 		self.byGUID[o.guid], self.byUnit[unit] = unit, o.guid

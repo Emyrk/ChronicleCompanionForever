@@ -26,9 +26,14 @@ local function dense(a)
 	for i = 1, count do if a[i] == nil then return nil end end
 	return count
 end
+local function metadataString(v) return type(v) == "string" and v ~= "" end
+local function metadataGender(v) return v == 1 or v == 2 or v == 3 end
 local function valid(p)
 	if type(p) ~= "table" or type(p.Name) ~= "string" or p.Name == "" or not timestamp(p.LastSeen) then return false end
 	if p.LastGrouped ~= nil and not timestamp(p.LastGrouped) then return false end
+	if p.Realm ~= nil and not metadataString(p.Realm) then return false end
+	if p.Race ~= nil and not metadataString(p.Race) then return false end
+	if p.Gender ~= nil and not metadataGender(p.Gender) then return false end
 	local n = dense(p.At)
 	if not n then return false end
 	for _, f in ipairs(fields) do if dense(p[f]) ~= n then return false end end
@@ -131,7 +136,7 @@ function methods:Slot(grouped, now)
 	end
 	return low or former
 end
-function methods:Observe(guid, name, level, guild, grouped, now, force)
+function methods:Observe(guid, name, level, guild, grouped, now, force, metadata)
 	if not self:Enabled() or not timestamp(now) or type(guid) ~= "string" or guid == "" or type(name) ~= "string" or name == "" or type(grouped) ~= "boolean" then return false end
 	if level ~= false and (not timestamp(level) or level == 0) then return false end
 	if guild ~= false and (type(guild) ~= "string" or guild == "_") then return false end
@@ -150,6 +155,13 @@ function methods:Observe(guid, name, level, guild, grouped, now, force)
 	end
 	local edited = p.Name ~= name or p.LastSeen ~= now or (grouped and p.LastGrouped ~= now)
 	p.Name, p.LastSeen = name, now
+	-- Optional player scalars are not observation history. Failed or unknown
+	-- lookups must not erase a previously available identity value.
+	if metadata then
+		if metadataString(metadata.realm) then edited = edited or p.Realm ~= metadata.realm; p.Realm = metadata.realm end
+		if metadataString(metadata.race) then edited = edited or p.Race ~= metadata.race; p.Race = metadata.race end
+		if metadataGender(metadata.gender) and (metadata.gender ~= 1 or p.Gender == nil) then edited = edited or p.Gender ~= metadata.gender; p.Gender = metadata.gender end
+	end
 	if grouped then p.LastGrouped = now end
 	local before = self.latest[guid] or last(p)
 	-- Unavailable lookups must not erase previously observed enrichment.
@@ -183,14 +195,14 @@ function methods:Collect(now, budget, refresh)
 		if guid then
 			local p = self.players[guid]
 			local observed = self:Enabled() and refresh and refresh(guid)
-			if observed then self:Observe(guid, observed.name, observed.level, observed.guild, observed.grouped, now, false) end
+			if observed then self:Observe(guid, observed.name, observed.level, observed.guild, observed.grouped, now, false, observed) end
 			if not self.current[guid] and now - p.LastSeen > AGE then
 				self:Remove(guid, now)
 			else
 				if compact(p, function(at) return now - at <= AGE end) then Storage.TouchCollections(self.db, now) end
 				self.latest[guid] = nil
 				if #p.At == 0 then
-					if observed then self:Observe(guid, observed.name, observed.level, observed.guild, observed.grouped, now, true)
+					if observed then self:Observe(guid, observed.name, observed.level, observed.guild, observed.grouped, now, true, observed)
 					elseif not self.current[guid] then self:Remove(guid, now) end
 				end
 			end

@@ -4,7 +4,7 @@ Status: implemented in the addon with deterministic mock coverage; live Forever 
 
 ## Scope and integration
 
-Record player levels, guilds, and party/raid presence as enrichment for combat logs. Talents and battleground events come later, in separate collections rather than extra meanings for these arrays. Do not change automatic combat logging.
+Record player identity metadata, levels, guilds, and party/raid presence as enrichment for combat logs. Talents and battleground events come later, in separate collections rather than extra meanings for these arrays. Do not change automatic combat logging.
 
 `ChronicleCompanionForever.toc` already declares the account-wide `ChronicleCompanionForeverDB`. `MinimapButton.lua` initializes that table at the addon's `ADDON_LOADED` and stores `minimapHidden`. Extend the existing table without replacing valid data or unrelated settings. Initialize scouting only after SavedVariables are available. Recording is enabled only when `sidekick_enabled == true`; missing, false, or other values disable recording. This gate does not control combat logging, incremental retention cleanup, or Sidekick capture-and-clear.
 
@@ -24,6 +24,9 @@ ChronicleCompanionForeverDB = {
             Players = {
                 ["Player-example-guid"] = {
                     Name = "Example",
+                    Realm = "CAMWOWUS2Realm5PvE", -- raw API realm string
+                    Race = "Scourge", -- stable race token, not localized text
+                    Gender = 2, -- UnitSex: 1 unknown, 2 male, 3 female
                     LastSeen = 1700000020,
                     LastGrouped = 1700000010,
                     At     = {1700000010, 1700000010, 1700000020},
@@ -39,7 +42,11 @@ ChronicleCompanionForeverDB = {
 
 `collections` is the shared pending-data container. Each collector owns only its named entry and its schema version; future talents and battleground datasets belong beside `collections.scouting`, not inside its player histories. Preserve unknown sibling collections. Persistent settings stay outside `collections` so Sidekick can capture and clear the entire container without resetting preferences. The addon initializes a missing container and scouting entry on load, but preserves malformed containers without recording into them. No migration from the former top-level scouting layout is provided.
 
-- Key players by GUID, not name. `Name` is the latest observed name-and-realm identity label, not a join key or historical name timeline. Do not create entries without a usable GUID and name.
+- Key players by GUID, not name. `Name` remains the existing observed identity label, not a join key or historical name timeline. Its construction is unchanged: Forever can return two name components from `UnitName`, so do not parse this label for authoritative realm metadata. Do not create entries without a usable GUID and name.
+- `Realm`, `Race`, and `Gender` are optional scalar fields on each player record, never observation arrays. Records without them remain valid under version 1. Populate or refresh available values during roster, nearby, and GC observations without appending a history row solely for these fields. Unavailable results preserve existing metadata. Their absence means not yet known; they do not use the array unchanged marker.
+- `Realm` is the raw nonempty string from return 7 of `GetPlayerInfoByGUID`. If unavailable or empty, use `GetRealmName` only when the unit is confirmed to be the local player by `UnitIsUnit` or matching GUID. An empty remote realm does not prove locality and remains unavailable. Do not normalize realm strings or infer rulesets from them.
+- `Race` is the nonempty stable token from return 2 of `UnitRace`, falling back to return 4 of `GetPlayerInfoByGUID`. For example, localized `Undead` is stored as `Scourge`.
+- `Gender` uses `UnitSex` numeric values: 1 unknown, 2 male, 3 female. Missing or invalid results do not overwrite metadata. Unknown 1 may initialize an unset field but does not replace a known 2 or 3. The persisted field is named `Gender`, not `Sex`.
 - `At`, `Levels`, `Guilds`, and `Party` are dense, equal-length arrays. A shared index is one observation. Never use nil for an unknown array value.
 - `At` holds Unix timestamps in seconds. Timestamps can collide; array order preserves observation order for each player. There are no session IDs or sequence IDs, and no implied ordering between different players' arrays.
 - `Levels` holds observed numeric levels. `Guilds` holds guild names; `""` specifically means known guildless. Proposed unknown marker: `false` for unavailable level or guild information. An API query failure must not become a guildless observation.
@@ -181,3 +188,21 @@ nearby units, but validates their current GUID to avoid unit-token reuse. An
 unchanged sighting refreshes `LastSeen`, never former-group `LastGrouped`.
 Validate target/mouseover/nameplate events and unit membership APIs on Forever;
 nameplate support is optional and guarded, not assumed to work on that client.
+
+### Identity API evidence and boundaries
+
+Reported live Forever testing observed `UnitName(player)` returning two name
+components and `GetPlayerInfoByGUID` returning localized class, class token,
+localized race, race token, sex, full name, and realm in positions 1 through 7.
+The self realm was empty; a remote realm was `CAMWOWUS2Realm5PvE`. Local
+`GetRealmName` returned `CAMWOW US2 Realm 1 PvE`. These raw forms are retained,
+not treated as interchangeable normalized names. Return 8 is unknown and is
+not used as a level or as any other metadata.
+
+Optional API calls are protected with `pcall`. All consumed returns pass the
+existing secret-value guard before comparison, concatenation, or persistence.
+A secret return discards that call's results; independent safe fallbacks may
+still supply metadata. Deterministic identity tests cover existing records,
+scalar updates without history growth, unavailable/secret/error results, realm
+fallback restrictions, and roster/nearby/GC propagation. This change has not
+itself been verified in a live client.
