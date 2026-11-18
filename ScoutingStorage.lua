@@ -69,8 +69,12 @@ function Storage.New(db, report)
 		return self
 	end
 	if type(db) ~= "table" then return reject() end
-	if db.scouting == nil then db.scouting = { Version = 1, Players = {} } end
-	local s = db.scouting
+	-- Sidekick captures and clears the whole container while WoW is closed.
+	-- Each collector owns only its entry; preserve unknown sibling collections.
+	if db.collections == nil then db.collections = {} end
+	if type(db.collections) ~= "table" then return reject() end
+	if db.collections.scouting == nil then db.collections.scouting = { Version = 1, Players = {} } end
+	local s = db.collections.scouting
 	if type(s) ~= "table" or (s.Version ~= nil and s.Version ~= 1) or type(s.Players) ~= "table" then return reject() end
 	local keys = {}
 	for guid, p in pairs(s.Players) do
@@ -82,13 +86,6 @@ function Storage.New(db, report)
 	table.sort(keys)
 	self.players = s.Players
 	for i, guid in ipairs(keys) do self.slots[i], self.lookup[guid] = guid, i end
-	if timestamp(db.scouting_ack) then
-		for _, guid in ipairs(keys) do
-			local p = self.players[guid]
-			compact(p, function(at) return at > db.scouting_ack end)
-			if #p.At == 0 then self:Remove(guid) end
-		end
-	end
 	return self
 end
 function methods:Enabled() return not self.blocked and self.db.sidekick_enabled == true end

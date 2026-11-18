@@ -19,7 +19,7 @@ function UnitInParty(u) return grouped and (units[u] == 'near' or units[u] == 's
 function UnitInRaid() return nil end
 local forwarded
 SlashCmdList = {CHRONICLEFOREVER = function(message) forwarded = message end}
-ChronicleCompanionForeverDB = {sidekick_enabled=true, minimapHidden=true, scouting_ack=10}
+ChronicleCompanionForeverDB = {sidekick_enabled=true, minimapHidden=true, other=10}
 for _, file in ipairs({'ScoutingStorage.lua','ScoutingRoster.lua','ScoutingNearby.lua'}) do assert(loadfile(file))('test', addon) end
 for _, f in ipairs(frames) do f.OnEvent(f, 'ADDON_LOADED', 'test') end
 local r, n, db = addon.ScoutingRoster, addon.ScoutingNearby, ChronicleCompanionForeverDB
@@ -70,7 +70,7 @@ SlashCmdList.CHRONICLEFOREVER('scout')
 assert(not db.scouting_nearby_enabled and r.store.players.near)
 db.scouting_nearby_enabled = true; db.sidekick_enabled = 'true'
 n:Observe('target'); assert(not n.byGUID.other)
-assert(db.minimapHidden and db.scouting_ack == 10)
+assert(db.minimapHidden and db.other == 10)
 SlashCmdList.CHRONICLEFOREVER('minimap')
 assert(forwarded == 'minimap', 'existing commands must still reach the minimap router')
 assert(SLASH_CHRONICLESCOUTING1 == nil and SlashCmdList.CHRONICLESCOUTING == nil)

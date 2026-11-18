@@ -6,33 +6,37 @@ Status: implemented in the addon with deterministic mock coverage; live Forever 
 
 Record player levels, guilds, and party/raid presence as enrichment for combat logs. Talents and battleground events come later, in separate collections rather than extra meanings for these arrays. Do not change automatic combat logging.
 
-`ChronicleCompanionForever.toc` already declares the account-wide `ChronicleCompanionForeverDB`. `MinimapButton.lua` initializes that table at the addon's `ADDON_LOADED` and stores `minimapHidden`. Extend the existing table without replacing valid data or unrelated settings. Initialize scouting only after SavedVariables are available. Recording is enabled only when `sidekick_enabled == true`; missing, false, or other values disable recording. This gate does not control combat logging or prevent acknowledged-data cleanup.
+`ChronicleCompanionForever.toc` already declares the account-wide `ChronicleCompanionForeverDB`. `MinimapButton.lua` initializes that table at the addon's `ADDON_LOADED` and stores `minimapHidden`. Extend the existing table without replacing valid data or unrelated settings. Initialize scouting only after SavedVariables are available. Recording is enabled only when `sidekick_enabled == true`; missing, false, or other values disable recording. This gate does not control combat logging, incremental retention cleanup, or Sidekick capture-and-clear.
 
 ## Storage contract
 
-Proposed collection name and example Lua representation:
+Collection layout and example Lua representation:
 
 ```lua
 ChronicleCompanionForeverDB = {
     minimapHidden = false, -- existing setting, preserved
     sidekick_enabled = true,
     scouting_nearby_enabled = false, -- persisted user preference
-    scouting_ack = 1700000000,
-    scouting = {
-        Players = {
-            ["Player-example-guid"] = {
-                Name = "Example",
-                LastSeen = 1700000020,
-                LastGrouped = 1700000010,
-                At     = {1700000010, 1700000010, 1700000020},
-                Levels = {60,         "_",        "_"},
-                Guilds = {"Guild",    "",         "_"},
-                Party  = {true,       "_",        false},
+    collections = {
+        scouting = {
+            Version = 1,
+            Players = {
+                ["Player-example-guid"] = {
+                    Name = "Example",
+                    LastSeen = 1700000020,
+                    LastGrouped = 1700000010,
+                    At     = {1700000010, 1700000010, 1700000020},
+                    Levels = {60,         "_",        "_"},
+                    Guilds = {"Guild",    "",         "_"},
+                    Party  = {true,       "_",        false},
+                },
             },
         },
     },
 }
 ```
+
+`collections` is the shared pending-data container. Each collector owns only its named entry and its schema version; future talents and battleground datasets belong beside `collections.scouting`, not inside its player histories. Preserve unknown sibling collections. Persistent settings stay outside `collections` so Sidekick can capture and clear the entire container without resetting preferences. The addon initializes a missing container and scouting entry on load, but preserves malformed containers without recording into them. No migration from the former top-level scouting layout is provided.
 
 - Key players by GUID, not name. `Name` is the latest observed name-and-realm identity label, not a join key or historical name timeline. Do not create entries without a usable GUID and name.
 - `At`, `Levels`, `Guilds`, and `Party` are dense, equal-length arrays. A shared index is one observation. Never use nil for an unknown array value.
@@ -42,7 +46,7 @@ ChronicleCompanionForeverDB = {
 - The literal Lua string `"_"` means unchanged from the preceding decoded value in that array. It is never a bare Lua variable. It is allowed in `Levels`, `Guilds`, and `Party`, never in `At`. Emit it only when the value is unchanged. Unknown is a value distinct from unchanged.
 - The first row of every player entry must contain explicit level, guild, and membership values, using unknown markers for unavailable level or guild data. Membership is always explicitly in-group or out-of-group; unknown membership produces no row. It must decode without earlier data. Every later row must decode by walking forward from that row.
 
-The collection name, unknown marker, and membership encoding above are concrete proposals for implementation review. The aligned arrays, GUID keys, identity label, literal unchanged marker, and self-contained retained history are the agreed requirements.
+The collection path is `ChronicleCompanionForeverDB.collections.scouting`. The aligned arrays, GUID keys, identity label, literal unchanged marker, and self-contained retained history are the storage requirements.
 
 ## Observation behavior
 
@@ -56,22 +60,24 @@ On reload, login, or logout, do not fabricate leave rows for previously saved pl
 
 Exact event subscriptions and refresh opportunities for enrichment are subject to client API validation below. Recording is not limited to the combat logger's instance eligibility.
 
-## Acknowledgement and pruning
+## Capture and clearing
 
-`scouting_ack` is an optional Unix timestamp, an inclusive cutoff. On the next addon load, rows with `At <= scouting_ack` may be removed. Missing or invalid acknowledgement means no acknowledgement-based pruning. The cutoff is not a row cursor and must not identify only some rows within a timestamp collision.
+`ChronicleCompanionForeverDB.collections` is the single capture-and-clear boundary. Sidekick must capture the entire container, including collection types and versions it does not understand. It must not clear the container after capturing only selected entries. There is no timestamp acknowledgement or acknowledgement-based pruning path.
 
-Before removing rows, decode their carried-forward values. Re-encode the retained rows in their original array order, compact all four arrays together, and materialize explicit values in the first retained row of each player. If wall-clock changes make timestamps non-monotonic, preserve decoded values across any removed interior rows too. Remove empty player entries. Retained history must remain self-contained even when its first row originally used `"_"`. Preserve the enable flag, acknowledgement, minimap settings, and unrelated database fields.
+Sidekick writes SavedVariables only while WoW is fully closed. Before rewriting, verify that the SavedVariables snapshot is unchanged and that no WoW process using it has restarted; otherwise defer capture and cleanup. Serialize Sidekick writers for the same file. The supported lifecycle assumes no concurrent WoW writers sharing that SavedVariables file.
 
-Sidekick may advance the cutoff only after capturing all scouting data through it, including every row sharing the cutoff timestamp. It writes SavedVariables only while WoW is fully closed. The cutoff never decreases. Before rewriting, verify that the SavedVariables snapshot is unchanged and that no WoW process using it has restarted; otherwise defer capture and cleanup. Serialize Sidekick writers for the same file. The supported lifecycle assumes no concurrent WoW writers sharing that SavedVariables file.
+After durable capture, replace `collections` with an empty table. On the next load, each collector initializes its missing entry. Do not clear or replace the container while the addon is running: collectors retain runtime references to their data.
+
+Addon retention cleanup remains collection-specific. When scouting removes aged rows, decode their carried-forward values, re-encode retained rows in their original array order, compact all four arrays together, and materialize explicit values in the first retained row of each player. If wall-clock changes make timestamps non-monotonic, preserve decoded values across removed interior rows too. Retained history must remain self-contained even when its first row originally used `"_"`.
 
 ## Sidekick and Chronicle ownership
 
-1. Sidekick waits for WoW to close, then captures the combat log and the full available scouting enrichment together. It does not select players or correlate player identities or timestamps with the log.
+1. Sidekick waits for WoW to close, then captures the combat log and the entire `collections` container together, including unknown collection types. It does not select players or correlate player identities or timestamps with the log.
 2. Sidekick durably uploads the pair, or durably archives the pair locally for retry. A queued request or an incomplete archive is not durable capture.
-3. After either durable outcome, Sidekick can always clear the captured scouting data, even if upload is pending from the archive. Preserve `sidekick_enabled`, `scouting_nearby_enabled`, `scouting_ack`, and unrelated settings such as `minimapHidden`. Alternatively, leave captured rows in place and advance `scouting_ack` for pruning at the next addon load. Never clear data outside the captured set.
+3. After either durable outcome, Sidekick can clear the captured container by setting `collections = {}`, even if upload is pending from the archive. Preserve `sidekick_enabled`, `scouting_nearby_enabled`, and every other field outside `collections`, including `minimapHidden`. Never clear data outside the captured snapshot.
 4. Chronicle correlates combat logs with enrichment. Sidekick is transport and retention plumbing, not the correlation engine.
 
-The retry archive must retain both members of the pair independently of the cleared SavedVariables. No Sidekick repository code is part of this addon change.
+The retry archive must retain the combat log and the complete captured container independently of the cleared SavedVariables. No Sidekick repository code is part of this addon change.
 
 WoW flushes SavedVariables on logout or UI reload. In-memory observations are not a realtime disk stream. Crashes can lose observations since the last flush. Logout or reload does not make external writes safe while the WoW process remains open.
 
@@ -112,15 +118,15 @@ When GC frees a slot, point the insertion cursor there. After insertion, advance
 ## Proposed implementation stack
 
 1. **Spec:** this document only. No runtime changes or probe promotion.
-2. **Storage + tests:** initialization and exact-true gate; aligned arrays and literal unchanged encoding; unknown versus guildless; timestamp collisions; inclusive acknowledgement pruning; materialized first retained rows; empty-player cleanup; preservation of minimap and unrelated fields.
+2. **Storage + tests:** initialization and exact-true gate; aligned arrays and literal unchanged encoding; unknown versus guildless; timestamp collisions; whole-container capture-and-clear lifecycle; unknown sibling collection preservation; age-based compaction; materialized first retained rows; empty-player cleanup; preservation of minimap and unrelated fields.
 3. **Roster + tests:** validated API adapter; party/raid snapshots and reconciliation; joins, departures, level/guild changes, unresolved units, party-to-raid transitions, disabled recording, and reload without fabricated leaves. Keep combat logging behavior unchanged. Validate client behavior separately from mocked unit tests.
 
 4. **Nearby + tests:** persisted default-off opt-in; validated observable-unit adapters; free-slot-only admission; existing-player updates and party promotion.
 
 ## Implementation and local checks
 
-Storage and roster collection now implement this contract. `scouting.Version = 1`
-is written for new stores; the unversioned example above is also accepted. An
+Storage and roster collection now implement this contract. `collections.scouting.Version = 1`
+is written for new stores; unversioned scouting entries are also accepted. An
 unknown version, malformed player, or imported store above 1,000 players makes
 the entire scouting store read-only with a chat warning. This conservative
 policy preserves affected data and avoids partial cleanup. Other addon settings
@@ -136,8 +142,8 @@ realm API. None of these APIs have been verified on a live Forever client here.
 
 Sidekick must set `ChronicleCompanionForeverDB.sidekick_enabled = true` while WoW
 is closed to opt in. The addon never enables that flag itself. Any other value
-turns recording off. Acknowledgement pruning on load and incremental GC still
-run while recording is disabled, without collecting fresh observations. GC
+turns recording off. Incremental GC still runs while recording is disabled,
+without collecting fresh observations. GC
 visits 10 slots every 10 seconds, with no catch-up loop after stalled frames.
 
 Run deterministic Lua 5.1 mocks from the repository root:
