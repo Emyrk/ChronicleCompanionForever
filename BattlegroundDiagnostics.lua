@@ -213,6 +213,7 @@ function d:Status()
         elseif self.failures[name] then lines[#lines+1] = 'API observed failure: ' .. name .. ' (' .. self.failures[name] .. ')' end
     end
     for _, line in ipairs(lines) do if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(line) end end
+    if addon.BattlegroundScoreboard then addon.BattlegroundScoreboard:Status() end
     return lines
 end
 d.announcements = {}

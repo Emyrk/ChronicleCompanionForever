@@ -154,3 +154,102 @@ Tests use deterministic clocks/APIs, not live servers: gating, raw nil/false and
 secret/unsupported values, API/registration failures, optional identity APIs,
 command routing, caps/counters, and preserved collections. Passing tests does not
 establish live Forever API support, event delivery, winner timing or global IDs.
+
+## Scoreboard field-availability probe and absolute-value diffs
+
+The experimental scoreboard sampler is automatic with the same literal Sidekick
+setting, and records only while `IsInInstance()` safely reports `true, "pvp"`.
+Its additional full-container capture path is:
+
+`ChronicleCompanionForeverDB.collections.battlegroundScoreboard`
+
+Include this sibling in the **exit-WoW-before-copy / before-Sidekick-clear** capture
+workflow above. Run `/clog bgstatus` to check scoreboard polling, hidden-field,
+unidentified-row, dropped-probe and API/timer counters. The scoreboard may show
+no changes because values are unchanged **or because the client hides them**;
+probe metadata distinguishes those cases without trying to defeat restrictions.
+
+### Cadence and client restrictions
+
+An observed BG entry starts an immediate baseline probe and one cancellable
+30-second timer. Each timer verifies the Sidekick/BG gates before sampling and
+rescheduling. Repeated zone/score events do not create duplicate timers.
+`UPDATE_BATTLEFIELD_SCORE` may sample if 30 seconds have elapsed since the last
+probe. Each admitted probe optionally calls `RequestBattlefieldScoreData()` once;
+synchronous update events cannot recursively trigger probes. The sampled rows are
+the currently available client cache; a refresh response may arrive asynchronously
+and appear in a later probe. This does not promise a server snapshot at exact
+30-second boundaries. No score filter is
+changed. Missing timers are reported; elapsed-time-gated score events can still
+provide observations if a monotonic clock is available.
+
+`PVP_MATCH_COMPLETE` or a readable conventional winner code (0/1/2) triggers one
+immediate completion probe and at most **three five-second retries**, only while
+still in BG. Then ordinary 30-second cadence resumes. No hidden winner value is
+compared. Leaving the world, leaving BG or noticing disabled Sidekick cancels the
+timer and clears in-memory baselines. Late cancelled callbacks cannot append.
+Reload or re-entry begins self-contained player baselines, not continuations of
+unpersisted state. Timer/event delivery still requires live verification.
+
+The Forever-generated API contract marks `C_PvP.GetScoreInfo(index)`
+`SecretInActivePvPMatch=true`. This code checks secrecy before indexing or
+comparing the returned row, each known field, the nested stats table and each
+nested stat value. Hidden values are recorded only as `Type="secret"`;
+there is **no bypass**, unsafe conversion, arithmetic on secret values, or
+inference of their contents. API calls and field accesses are protected.
+`GetNumBattlefieldScores()` and optional `GetBattlefieldScoreFaction()` are probed
+and their availability is explicit. Returned rows may reflect the UI's faction
+filter; **this is an observable subset, not a proven full match roster**. Missing
+or unavailable rows never infer player departure.
+
+### Schema (`Version = 1`)
+
+Top level: `{ Version=1, Probes={...}, Counts={...}, Bytes=... }`.
+Each admitted probe stores:
+
+- `Source`, tagged `At`/`Monotonic`, `Request` API status, tagged `Count` and
+  `Filter`, plus optional `Omitted` row count.
+- `Fields`: counts by known field path and observed type for that probe, e.g.
+  `Fields.damageDone.secret = 10`. These describe field availability without
+  retaining hidden contents. Polls with no player changes still store this summary.
+- `Changes`: per-player `{ Identity, IdentityKind, Baseline, Fields }` records.
+  Identity prefers readable, untruncated `guid`, otherwise readable `name` with
+  `IdentityKind="name"`. Name fallback is weaker and may collide; duplicate or
+  missing identities are not merged by row index. A change in identity kind
+  starts a new baseline. First observation includes all known fields; subsequent
+  observations include **only changed fields, with their current absolute values**,
+  never arithmetic deltas. Nil/false/secret/unavailable transitions are changes.
+- `Unidentified`: `{ Index, Row }` availability markers for inaccessible rows or
+  missing/duplicate identity. `Index` is diagnostic position only, not identity.
+
+Known scalar fields: `name`, `guid`, `killingBlows`, `honorableKills`, `deaths`,
+`honorGained`, `faction`, `raceName`, `gender`, `className`, `classToken`,
+`damageDone`, `healingDone`, `rating`, `ratingChange`, `prematchMMR`, `mmrChange`,
+`postmatchMMR`, `talentSpec`, `honorLevel`, `roleAssigned`.
+
+Each scalar has `Type` (`nil`, `boolean`, `number`, `string`, `secret`,
+`unsupported`, `unavailable`, or `truncated`) and safe `Value` where applicable.
+Strings are limited to 512 bytes; truncation retains original `Bytes`.
+`stats` is a tagged ordered snapshot of up to 32 objective-stat rows containing
+`pvpStatID`, `pvpStatValue`, `orderIndex`, `name`, `tooltip`, and `iconName`, each
+individually tagged. IDs/labels/values remain raw and unclassified. A changed
+stats snapshot replaces that field as a whole; no speculative objective matching.
+Only fixed known API keys are accessed, never arbitrary API-returned table keys.
+
+### Bounds and replay
+
+At most **4,000 probes**, **120 player rows per probe**, **32 stats per player**,
+and **16,777,216 storage-weight units** (with 4,096 reserved for bookkeeping).
+Capacity never evicts pending evidence. The entire probe and its changes append
+atomically; a rejected probe does **not** advance player baselines. Counters still
+show attempted polling and drops. `Counts` contains bounded integer counters:
+`Polls`, `Dropped`, `Hidden`, `Unidentified`, `Unavailable`, `Truncated`, `APIErrors`,
+`MissingAPIs`, `TimerFailures`. Hidden counts are observations, not distinct fields
+or players. Unknown/malformed scoreboard stores are preserved with a warning.
+Other collection siblings and combat logging remain untouched.
+
+Availability and counter visibility are as important as readable damage/healing:
+a successful test may establish that mid-match fields are restricted and only
+become readable at completion. Capturing a full match including a short stay on
+the final scoreboard gives the bounded completion retries an opportunity to
+observe that transition. No live field availability is guaranteed by mock tests.
