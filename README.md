@@ -15,11 +15,18 @@ Chronicle Companion Forever starts and stops combat logging automatically so you
 - Enables combat logging and Advanced Combat Logging when you enter an instance.
 - Automatically stops combat logging when you leave the instance.
 - Logs dungeons, raids, arenas, scenarios, and other non-battleground instances.
-- Does not record battlegrounds.
+- Does not combat-log battlegrounds. Optional Sidekick-enabled battleground **collections** retain observed lifecycle, raw objective announcements, and changed world-state snapshots in SavedVariables (not the combat log).
 - Retries after loading screens when WoW Forever temporarily ignores a logging request.
 - Shows a green minimap icon while recording and a red icon when not recording.
 
 Combat logs are written to the game's normal `Logs/WoWCombatLog.txt` location.
+
+Battleground collections require the literal saved setting `sidekick_enabled = true`.
+They preserve raw flag/base evidence where client APIs expose it; they do not infer
+localized objective semantics or actual match start times. See the [battleground
+schema, limits, and unverified Forever API caveats](docs/battlegrounds.md). Pending
+history is never evicted to make space; recording pauses at the documented limit
+until Sidekick captures and clears collections while WoW is closed.
 
 ## Recommended: Chronicle Sidekick
 
