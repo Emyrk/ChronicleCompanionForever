@@ -2,15 +2,20 @@ local _, addon = ...
 local frame = CreateFrame("Frame")
 local collector = {}
 addon.Battlegrounds = collector
-local MAX_EVENTS, MAX_BYTES = 512, 262144
+local MAX_EVENTS, MAX_BYTES = 20000, 8388608
 local unpackValues = unpack or table.unpack
 local chats = { CHAT_MSG_BG_SYSTEM_ALLIANCE = true, CHAT_MSG_BG_SYSTEM_HORDE = true, CHAT_MSG_BG_SYSTEM_NEUTRAL = true }
+local function isSecret(value)
+	if type(issecretvalue) ~= "function" then return false end
+	local ok, result = pcall(issecretvalue, value)
+	return not ok or result ~= false
+end
 local function call(name, ...)
 	if type(_G[name]) ~= "function" then return nil end
 	local result = { pcall(_G[name], ...) }
 	if not result[1] then return nil end
 	for i = 2, 10 do
-		if type(issecretvalue) == "function" and issecretvalue(result[i]) then return nil end
+		if isSecret(result[i]) then return nil end
 	end
 	return unpackValues(result, 2, 9)
 end
@@ -93,11 +98,12 @@ function collector:Store(db)
 end
 function collector:Append(e, at)
 	local s = self.store
-	if s.Stopped then self:Warn("capacity reached; pending history preserved. Sidekick must drain collections while WoW is closed."); return false end
+	if s.Stopped then if addon.BattlegroundDiagnostics then addon.BattlegroundDiagnostics:Count("LegacyDropped") end; self:Warn("capacity reached; pending history preserved. Sidekick must drain collections while WoW is closed."); return false end
 	e.At, e.Segment = at, self.active or (#s.Events + 1)
 	local bytes = weight(e) + 8
 	if #s.Events >= MAX_EVENTS or self.bytes + bytes > MAX_BYTES then
 		s.Stopped = "capacity"
+		if addon.BattlegroundDiagnostics then addon.BattlegroundDiagnostics:Count("LegacyDropped") end
 		addon.ScoutingStorage.TouchCollections(self.db, at)
 		self:Warn("capacity reached; pending history preserved. Sidekick must drain collections while WoW is closed.")
 		return false
@@ -124,11 +130,17 @@ local function same(a, b)
 	for i, row in ipairs(a) do for j = 1, 8 do if row[j] ~= b[i][j] then return false end end end
 	return true
 end
-function collector:Event(event, text)
+function collector:Event(event, ...)
+	local text = ...
 	local db = ChronicleCompanionForeverDB
 	if type(db) ~= "table" or db.sidekick_enabled ~= true then
 		self.active, self.rows, self.winner = nil, nil, nil
 		return
+	end
+	if addon.BattlegroundDiagnostics then
+		-- Validate existing collection before touching any diagnostic sibling.
+		if db.collections and (type(db.collections) ~= "table" or db.collections.battlegrounds ~= nil) and not self:Store(db) then return end
+		addon.BattlegroundDiagnostics:Observe(event, ...)
 	end
 	local at = call("time")
 	if not integer(at) then return end
@@ -147,7 +159,7 @@ function collector:Event(event, text)
 		if not self:Append({ Kind = "observed_enter", Source = event }, at) then return end
 		self.active = index
 	end
-	if chats[event] and not (type(issecretvalue) == "function" and issecretvalue(text)) and type(text) == "string" and #text <= 4096 then
+	if chats[event] and not isSecret(text) and type(text) == "string" and #text <= 4096 then
 		self:Append({ Kind = "announcement", Source = event, Text = text }, at)
 	end
 	local rows = self:Snapshot()
@@ -157,7 +169,12 @@ function collector:Event(event, text)
 		if self:Append({ Kind = "completion_observed", Winner = winner }, at) then self.winner = winner end
 	end
 end
-for _, event in ipairs({ "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "UPDATE_WORLD_STATES", "UPDATE_BATTLEFIELD_STATUS", "UPDATE_BATTLEFIELD_SCORE", "CHAT_MSG_BG_SYSTEM_ALLIANCE", "CHAT_MSG_BG_SYSTEM_HORDE", "CHAT_MSG_BG_SYSTEM_NEUTRAL" }) do
-	pcall(frame.RegisterEvent, frame, event)
+for _, event in ipairs({ "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "PLAYER_TARGET_CHANGED", "UPDATE_MOUSEOVER_UNIT", "UPDATE_WORLD_STATES", "UPDATE_BATTLEFIELD_STATUS", "UPDATE_BATTLEFIELD_SCORE", "CHAT_MSG_BG_SYSTEM_ALLIANCE", "CHAT_MSG_BG_SYSTEM_HORDE", "CHAT_MSG_BG_SYSTEM_NEUTRAL" }) do
+	if addon.BattlegroundDiagnostics then addon.BattlegroundDiagnostics:Register(frame, event) else pcall(frame.RegisterEvent, frame, event) end
+end
+if addon.BattlegroundDiagnostics then
+	for event in pairs(addon.BattlegroundDiagnostics.announcements) do
+		if not chats[event] then addon.BattlegroundDiagnostics:Register(frame, event) end
+	end
 end
 frame:SetScript("OnEvent", function(_, event, ...) collector:Event(event, ...) end)

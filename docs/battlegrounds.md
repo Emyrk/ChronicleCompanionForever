@@ -1,140 +1,156 @@
-# Battleground evidence collection (Version 1)
+# Experimental battleground evidence and diagnostics
 
-This is **SavedVariables collection, not combat logging**. It runs only while
-`ChronicleCompanionForeverDB.sidekick_enabled == true` (literal boolean). It does
-not call `LoggingCombat`, change logging CVars, affect the minimap logging light,
-or write `WoWCombatLog.txt`. Arenas and non-battleground instances are excluded
-from this collector. The existing combat logger still excludes battlegrounds.
+**No API or event behavior here has been live-verified on WoW Forever.** This PR
+collects raw evidence to decide future API contracts, schema and classification.
+There is no localized objective classifier and no asserted globally unique match ID.
 
-## Compatibility and evidence contract
+Collection and diagnostics run automatically only when
+`ChronicleCompanionForeverDB.sidekick_enabled == true` (literal boolean). There is
+no second diagnostic opt-in. The addon does not enable Sidekick for you. Disabled
+observations/status do not mutate SavedVariables. This is **not combat logging**:
+no `LoggingCombat`/CVar/minimap-light changes and no `WoWCombatLog.txt` output.
+The existing combat logger continues to exclude battlegrounds.
 
-**None of these APIs/events have been verified on live WoW Forever.** This is a
-best-effort implementation of conventional WoW interfaces, not a claim of complete
-Forever objective coverage. Event registration and API calls are protected;
-missing, throwing, secret, or unsupported values are skipped. Without usable
-`IsInInstance()` and `time()` there is no recording. Collection starts only after
-an observed `IsInInstance()` result of `true, "pvp"`.
+## One-match capture checklist
 
-The event sources are `PLAYER_ENTERING_WORLD`, `ZONE_CHANGED_NEW_AREA`,
-`UPDATE_BATTLEFIELD_STATUS`, `UPDATE_BATTLEFIELD_SCORE`, `UPDATE_WORLD_STATES`, and
-`CHAT_MSG_BG_SYSTEM_ALLIANCE`, `CHAT_MSG_BG_SYSTEM_HORDE`,
-`CHAT_MSG_BG_SYSTEM_NEUTRAL`. On each delivered event, the collector checks current
-presence, captures available evidence, and checks `GetBattlefieldWinner()`.
-It does not poll, request scoreboards, or collect player scoreboard statistics.
+1. Arrange Sidekick enablement using your existing setup; verify `/clog bgstatus`
+   says `Sidekick gate=true; diagnostics=automatic` before queueing. The command
+   works outside BG and before initialization, shows counts/caps, registration
+   failures, missing APIs and previously observed API failures; it never clears data.
+   When enabled it may initialize diagnostic storage. Missing optional APIs are
+   expected, not evidence that the remaining collector is broken.
+2. Play a battleground normally. Run `/clog bgstatus` inside and after the match;
+   retain screenshots/text of any warnings. Target a recognizable BG NPC (and/or
+   mouse over it) to capture raw GUID candidates. If possible, have another enabled
+   player in the **same match** target the **same NPC** and collect their artifact
+   too. Note approximate real time, map, locale, character, result and NPC identity.
+3. **Exit WoW completely** to flush SavedVariables. Do not rely on copying the file
+   while playing or on `/reload` as a safe offline capture window.
+4. **Before Sidekick clears collections**, copy the complete
+   `WTF/Account/<ACCOUNT>/SavedVariables/ChronicleCompanionForever.lua` (relative to
+   the actual Forever client installation) to a safe artifact location. Retain the
+   original file unedited; `.bak` is optional and may describe an older session.
+   Alternatively retain Sidekick's full-container capture artifact and verify it
+   includes both paths below. Coordinate/temporarily pause external clearing if
+   necessary; this addon has no upload acknowledgment or live-clear protocol.
+5. Share the artifact(s), capture notes and status output for analysis. The file
+   includes player names/GUIDs, NPC/message text and other addon collections;
+   handle it as potentially identifying data. Sidekick may capture and clear the
+   **whole `collections` container only while WoW is closed**. Never discard the
+   sole copy of pending evidence. Restarting after an offline clear creates fresh
+   storage; there is no automatic eviction.
 
-This is **not all possible battleground traffic**. Candidate additional channels
-not captured are `RAID_BOSS_EMOTE`, `RAID_BOSS_WHISPER`,
-`CHAT_MSG_RAID_BOSS_EMOTE`, `CHAT_MSG_RAID_BOSS_WHISPER`,
-`CHAT_MSG_MONSTER_YELL`, `CHAT_MSG_MONSTER_SAY`, `CHAT_MSG_MONSTER_EMOTE`,
-`CHAT_MSG_MONSTER_WHISPER`, and generic `CHAT_MSG_SYSTEM`. Some client versions or
-battleground scripts may deliver objective/NPC messages on such channels, but
-Forever delivery has not been established. They also carry non-objective noise.
-Live traces are needed to decide which to include, their argument shapes and any
-cross-channel duplicate identity. Player chat, combat-log events, scores, map
-POIs, unit auras, and match statistics are not captured. Only the three BG-system
-channels above have their first message argument retained; sender, language,
-channel metadata, and further chat arguments are not persisted.
+Exact persisted paths (both included by existing full-container Sidekick capture):
 
-Recognized structure currently means the **event envelope** (announcement source,
-world-state snapshot, observed lifecycle, completion code), not localized message
-classification. All admitted BG-system announcements are raw fallback, including
-repeated or unrecognized text. There is no objective-text dictionary or semantic
-compression; snapshot deduplication is the only evidence compression. A future
-verified locale/client-specific classifier should retain raw evidence and avoid
-claiming universal flag/base coverage from these channels alone.
+- `ChronicleCompanionForeverDB.collections.battlegrounds`
+- `ChronicleCompanionForeverDB.collections.battlegroundDiagnostics`
 
-- **Announcements:** the first chat argument is retained verbatim with its exact
-  channel/event name. Localized text is **not parsed** into asserted flag pickup,
-  capture, return, base assault, defense, ownership, actor, or faction semantics.
-  Such actions are evidence only where the client announces or displays them.
-  Identical announcements are retained: without a reliable message ID they may
-  represent distinct actions.
-- **World states:** ordered snapshots of `GetNumWorldStateUI()` rows and the first
-  eight positional returns of `GetWorldStateUIInfo(index)`. These conventionally
-  represent uiType, state, text, icon, dynamicIcon, tooltip, dynamicTooltip, and
-  extendedUI; their actual meanings/types on Forever are unverified. Values are
-  raw booleans, finite numbers, or strings; nil positions become `false` (nil and
-  actual false are intentionally indistinguishable). Row order/index is UI order,
-  **not a stable objective ID**. Consumers must not interpret arbitrary row/text
-  changes as authoritative objective transitions. Identical consecutive available
-  snapshots are suppressed within a segment. An unavailable snapshot is skipped,
-  not replaced by an empty one; a successful count of zero is an empty snapshot.
-- **Completion:** `GetBattlefieldWinner()` values 0, 1, or 2 are retained once per
-  segment as raw winner codes. Conventional clients use Horde/Alliance/tie codes,
-  but that mapping is not asserted here. No completion is inferred from chat,
-  leaving, elapsed time, or a missing winner. Completion does not stop collecting
-  subsequent evidence until an observed exit.
+Other collection siblings, including scouting and unknown entries, are preserved.
+Malformed containers/unsupported owned schemas are preserved rather than reset.
+The `collections.last_updated` marker uses observed wall time when available.
+Missing time does not prevent diagnostic evidence, but prevents legacy events.
 
-## Persisted schema
+## Diagnostic evidence (`battlegroundDiagnostics.Version = 1`)
 
-```lua
-ChronicleCompanionForeverDB.collections.battlegrounds = {
-    Version = 1,
-    Events = {
-        { At = 1700000000, Kind = "observed_enter", Segment = 1,
-          Source = "PLAYER_ENTERING_WORLD" },
-        { At = 1700000000, Kind = "world_states", Segment = 1,
-          Rows = { { 1, 1, "localized UI text", false, false, false, false, false } } },
-        { At = 1700000001, Kind = "announcement", Segment = 1,
-          Source = "CHAT_MSG_BG_SYSTEM_NEUTRAL", Text = "localized announcement" },
-        { At = 1700000300, Kind = "completion_observed", Segment = 1, Winner = 0 },
-        { At = 1700000310, Kind = "observed_leave", Segment = 1 },
-    },
-    -- Stopped = "capacity" -- only set when a storage limit prevents append
-}
-```
+Top-level fields are `Version`, `Events`, `Bytes` and `Counts`. Records retain
+`Source`, raw `WallTime` (`time()`), `Monotonic` (`GetTime()`) and `Presence`
+(`IsInInstance()`). First observation per addon load/container includes registration
+success/failure and raw `GetBuildInfo`, `GetLocale`, `UnitGUID("player")`,
+`UnitName("player")`. Time values are observation evidence, not event occurrence
+or match-start times; monotonic clocks are client-local, not cross-player clocks.
 
-`At` is observed wall-clock `time()` in integer seconds, **not the match start,
-objective occurrence time, or match duration**. Events array order is observation
-order; equal or backwards timestamps are possible. `Segment` references the
-array index of its `observed_enter`. Segments are observation windows, not match
-identifiers. Entry `Source` identifies the event that first exposed presence.
+Only an observed `IsInInstance() == true, "pvp"` admits announcement arguments or
+BG snapshots. Arena and outside-BG announcements are not saved. Lifecycle/status
+API observations can be saved outside BG to diagnose unsupported clients.
+No player-chat channels, combat-log streams, or scoreboard statistics are registered.
 
-Reload/login starts a new segment on the next observation in a battleground;
-it never merges into an old segment or fabricates an end for it. Disabling
-Sidekick, once noticed on an event, discards only in-memory continuity; reenabling
-starts a new segment. No data is mutated while disabled. Missed exits, reconnects,
-disabled intervals, or direct transitions between battlegrounds without an
-observed non-pvp state cannot be reconstructed or reliably distinguished. Repeated
-world/zone events while continuously in pvp do not create extra entries. Missing
-exit/completion events remain missing in storage.
+Candidate announcements are recorded **without semantic interpretation**:
 
-Only this collection entry is owned by the collector. Sibling collections are
-preserved. Mutations use `ScoutingStorage.TouchCollections` for the shared
-`collections.last_updated` wall-clock marker (including creation and a capacity
-stop); no-op/disabled observations do not touch it. No collection is created
-merely for logging in outside a battleground.
+- `CHAT_MSG_BG_SYSTEM_ALLIANCE`, `CHAT_MSG_BG_SYSTEM_HORDE`, `CHAT_MSG_BG_SYSTEM_NEUTRAL`
+- `RAID_BOSS_EMOTE`, `RAID_BOSS_WHISPER`, `CHAT_MSG_RAID_BOSS_EMOTE`, `CHAT_MSG_RAID_BOSS_WHISPER`
+- `CHAT_MSG_MONSTER_SAY`, `CHAT_MSG_MONSTER_YELL`, `CHAT_MSG_MONSTER_EMOTE`, `CHAT_MSG_MONSTER_WHISPER`
+- `CHAT_MSG_SYSTEM`
 
-## Limits and preservation
+Other triggers are `PLAYER_ENTERING_WORLD`, `ZONE_CHANGED_NEW_AREA`,
+`UPDATE_WORLD_STATES`, `UPDATE_BATTLEFIELD_STATUS`, `UPDATE_BATTLEFIELD_SCORE`,
+`PLAYER_TARGET_CHANGED` and `UPDATE_MOUSEOVER_UNIT`. Target/mouseover triggers
+only store diagnostic records in BG. No timer, tight polling, or scoreboard
+requests are used. Every admitted BG event includes snapshots so a message can be
+interpreted alongside contemporaneous API evidence, including unchanged states:
 
-- At most **512 events** and **262,144 units of storage weight** across all pending
-  segments. Weight counts string bytes and eight units per number/boolean,
-  including table keys, recursively. It bounds payload growth, not exact Lua heap
-  use or serialized file size.
-- Each announcement must be at most **4,096 bytes**. Larger/secret/non-string
-  messages are skipped, not truncated into misleading evidence.
-- A snapshot must have at most **32 rows**, eight fields per row, and at most
-  **256 bytes per string field**. Invalid, oversized, or partly unavailable
-  snapshots are skipped as a whole. Consequently this is not a lossless stream.
-- When the next valid event would exceed the event/weight budget, the collector
-  sets `Stopped = "capacity"`, warns once per load (if a chat frame is available),
-  and stops appending even across reloads. It **never evicts pending history**.
-  Capacity can prevent recording a later exit/completion. There is no automatic
-  age-based deletion, ring buffer, or destructive recovery.
-- Malformed/oversized existing data, unknown versions, and unknown fields in the
-  owned schema block recording with a warning and are preserved unchanged.
-  Unknown sibling collections do not block recording.
+- All raw `GetInstanceInfo()` returns: name, type and conventional eighth return
+  map/instance ID are candidates, **not a unique match identifier**.
+- `GetBattlefieldWinner()`, including nil and unconventional values.
+- Optional `C_PvP.GetActiveMatchState()` / `GetActiveMatchDuration()`.
+- `GetNumWorldStateUI()` and up to 64 `GetWorldStateUIInfo(index)` raw rows.
+- `GetMaxBattlefieldID()` and `GetBattlefieldStatus(slot)` for up to 16 slots;
+  fallback to three conventional slots when the count is unavailable/invalid.
+- Raw `UnitGUID("player")`, `UnitGUID("target")`, `UnitGUID("mouseover")` samples.
+  Samples can include players or NPCs and are not interpreted/deduplicated as
+  instance identifiers. No enumeration of nearby units is attempted.
 
-Chronicle Sidekick should capture and clear `collections` **while WoW is closed**,
-then the next load can create fresh storage. The addon does not implement upload,
-acknowledgment, or a live-clear protocol. Do not delete pending data to recover
-space unless it has been captured or intentionally discarded by its owner.
+### Instance identity investigation
+
+`GetBattlefieldStatus` return meanings differ between client versions. The
+[Classic API documentation](https://warcraft.wiki.gg/wiki/API_GetBattlefieldStatus/Classic)
+labels its third return a displayed instance number (e.g. Warsong Gulch 13), while
+other versions label it team size. **All returns are retained without assigning
+that position a meaning.** Neither a map ID, displayed server instance number,
+nor a GUID component is proven globally unique. Compare same-match multi-player
+artifacts and later different-match artifacts before choosing identity semantics.
+A single run can discover candidate evidence but cannot prove global uniqueness.
+
+### Raw value representation and support failures
+
+API envelopes contain `API`, positional `Args`, and `Status = "ok"`, `"missing"`
+or `"error"`; successful `Returns` and failed `Error` use the same representation.
+A raw argument list is `{ n = original_count, Values = { ... }, Omitted = ... }`.
+Each position is a tagged table: `Type = "nil"`, `"string"`, `"number"`,
+`"boolean"`, `"secret"` or `"unsupported"`; admitted primitives have `Value`.
+Thus nil and false remain distinct, including trailing nil returns. Unsupported
+values retain `LuaType`, never unsafe object serialization/string conversion.
+Secret values (or a throwing secret-value guard) are redacted before comparison.
+Strings over 8,192 bytes retain a prefix and original `Bytes`; argument/return
+positions beyond 64 are omitted with an explicit count. API failures are protected
+and retain safe raw error evidence. Optional APIs may be entirely absent.
+
+### Bounds and counters
+
+Diagnostics retain at most **20,000 records** and **16,777,216 storage-weight
+units**, reserving 4,096 units for bookkeeping. `Bytes` is recursive key/value
+weight, not serialized file size or Lua heap usage. Counters are bounded numbers:
+`Dropped` (record capacity), `Skipped` (unsupported/secret values or unusable
+world count), `Truncated` (oversized values/rows/slots), `APIErrors`, `MissingAPIs`,
+and `LegacyDropped` (legacy event capacity). These count observations, not distinct
+API names; they can continue increasing when record storage is full. Raw records
+are never evicted. Capacity warns once per load and `/clog bgstatus` summarizes
+counts/caps. A long/noisy match or existing backlog can still exhaust storage;
+this is not a lossless guarantee. Registration failures are retained separately
+in the first record and reported by status.
+
+## Legacy structured evidence (`battlegrounds.Version = 1`)
+
+Existing schema is unchanged: `Events` contains `observed_enter` (with `Source`),
+`announcement` (`Source`, `Text`, only BG-system channels), `world_states` (`Rows`),
+`completion_observed` (`Winner` 0/1/2), and `observed_leave`. Every event has `At`
+(integer wall seconds) and `Segment` (index of observed entry, **not match ID**).
+Reload/re-enable starts another observation window. No actual start/end, faction
+winner mapping, or objective actions are inferred. World rows retain the first
+eight returns, replacing nil with false, deduplicate identical snapshots, and
+require at most 32 rows and 256-byte strings. Legacy announcement strings above
+4,096 bytes are skipped; diagnostics retain safer richer raw evidence separately.
+
+Legacy capacity is now **20,000 events / 8,388,608 weight units**, rather than 512
+small events. Capacity sets `Stopped = "capacity"`, warns, and never evicts history.
+Malformed/unknown legacy stores pause the collector without changing them or their
+siblings. Missed exits, disabled intervals and continuous pvp-to-pvp transitions
+cannot be reliably reconstructed by the legacy segment logic; raw instance
+observations are provided for investigation, not speculative merging.
 
 ## Regression validation
 
-Run `nix shell nixpkgs#lua -c sh -c 'for test in tests/test_*.lua; do lua "$test" || exit; done'`
-(or use an installed Lua). Deterministic mock tests cover opt-in, preserved siblings,
-raw messages, snapshot changes, duplicate world events, completion, observed exits,
-reload segmentation, missing/throwing/secret APIs, malformed schemas, both storage
-limits, and offline draining. These tests do not verify the live client's API
-availability, positional world-state contract, event delivery, or winner timing.
+Run `nix shell nixpkgs#lua -c sh -c 'for test in tests/test_*.lua; do lua "$test" || exit; done'`.
+Tests use deterministic clocks/APIs, not live servers: gating, raw nil/false and
+secret/unsupported values, API/registration failures, optional identity APIs,
+command routing, caps/counters, and preserved collections. Passing tests does not
+establish live Forever API support, event delivery, winner timing or global IDs.

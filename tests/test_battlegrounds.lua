@@ -97,16 +97,16 @@ load(malformed); fire(); assert(malformed.collections == 'opaque')
 local full = {sidekick_enabled=true}
 c = load(full); fire()
 local events = full.collections.battlegrounds.Events
-for i = 1, 520 do fire('CHAT_MSG_BG_SYSTEM_NEUTRAL', 'event '..i) end
-assert(#events == 512 and full.collections.battlegrounds.Stopped == 'capacity')
-local first, last = events[1], events[512]
+for i = 1, 20020 do fire('CHAT_MSG_BG_SYSTEM_NEUTRAL', 'event '..i) end
+assert(#events == 20000 and full.collections.battlegrounds.Stopped == 'capacity')
+local first, last = events[1], events[20000]
 clock = 200; load(full); fire()
-assert(#events == 512 and events[1] == first and events[512] == last and full.collections.last_updated == 104)
+assert(#events == 20000 and events[1] == first and events[20000] == last and full.collections.last_updated == 104)
 -- Weight capacity also stops without removing old events.
 local heavy = {sidekick_enabled=true}
 load(heavy); fire()
-for i = 1, 100 do fire('CHAT_MSG_BG_SYSTEM_NEUTRAL', string.rep('x', 4096)) end
-assert(heavy.collections.battlegrounds.Stopped == 'capacity' and #heavy.collections.battlegrounds.Events < 100)
+for i = 1, 2100 do fire('CHAT_MSG_BG_SYSTEM_NEUTRAL', string.rep('x', 4096)) end
+assert(heavy.collections.battlegrounds.Stopped == 'capacity' and #heavy.collections.battlegrounds.Events < 2100)
 local count = #heavy.collections.battlegrounds.Events
 load(heavy); fire(); assert(#heavy.collections.battlegrounds.Events == count)
 -- Sidekick offline clear permits fresh collection next load.

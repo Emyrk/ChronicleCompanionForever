@@ -22,6 +22,13 @@ Chronicle Companion Forever starts and stops combat logging automatically so you
 Combat logs are written to the game's normal `Logs/WoWCombatLog.txt` location.
 
 Battleground collections require the literal saved setting `sidekick_enabled = true`.
+Experimental bounded raw diagnostics are automatic with that setting; the addon
+does not enable it. Run `/clog bgstatus` before queueing and after the match.
+Exit WoW, then copy `WTF/Account/<ACCOUNT>/SavedVariables/ChronicleCompanionForever.lua`
+**before Sidekick clears collections** (or retain its complete capture artifact).
+Diagnostics live at `ChronicleCompanionForeverDB.collections.battlegroundDiagnostics`.
+See the [one-match capture checklist](docs/battlegrounds.md#one-match-capture-checklist),
+including optional same-match cross-player instance-ID investigation.
 They preserve raw flag/base evidence where client APIs expose it; they do not infer
 localized objective semantics or actual match start times. See the [battleground
 schema, limits, and unverified Forever API caveats](docs/battlegrounds.md). Pending

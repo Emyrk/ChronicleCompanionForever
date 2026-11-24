@@ -13,4 +13,5 @@ ScoutingStorage.lua
 ScoutingRoster.lua
 ScoutingNearby.lua
 
+BattlegroundDiagnostics.lua
 Battlegrounds.lua
