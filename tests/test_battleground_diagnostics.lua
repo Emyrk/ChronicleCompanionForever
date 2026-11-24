@@ -113,4 +113,43 @@ fire(); assert(future.collections.battlegroundDiagnostics == nil and future.coll
 for _, registration in ipairs(d.registrations) do
  assert(not registration.Event:match('^CHAT_MSG_PARTY') and registration.Event ~= 'CHAT_MSG_SAY')
 end
+-- Disable/re-enable must invalidate the cached handle, including direct Observe.
+local resumed = {sidekick_enabled=true}
+ChronicleCompanionForeverDB = resumed
+IsInInstance = function() return true, 'pvp' end
+GetNumWorldStateUI = function() return 0 end
+d:Observe('PLAYER_ENTERING_WORLD')
+local pending = resumed.collections.battlegroundDiagnostics
+local before = #pending.Events
+resumed.sidekick_enabled = false
+d:Observe('PLAYER_ENTERING_WORLD'); assert(d.store == nil)
+resumed.sidekick_enabled = true
+d:Observe('PLAYER_ENTERING_WORLD'); assert(#pending.Events == before + 1)
+resumed.sidekick_enabled = false; assert(d:Open(resumed) == nil)
+resumed.sidekick_enabled = true; assert(d:Open(resumed) == pending)
+-- Outside-BG rejected announcements still mark changed support counters.
+resumed.collections.last_updated = 1
+IsInInstance = nil
+d:Observe('CHAT_MSG_SYSTEM', 'not retained')
+assert(resumed.collections.last_updated == 123 and #pending.Events == before + 1)
+resumed.collections.last_updated = 1
+IsInInstance = function() error('blocked') end
+d:Observe('CHAT_MSG_SYSTEM', 'not retained')
+assert(resumed.collections.last_updated == 123 and #pending.Events == before + 1)
+-- Correcting persisted weight marks the mutation; no-op reopening does not.
+pending.Bytes = 0; resumed.collections.last_updated = 1; d.db = nil
+d:Open(resumed); assert(pending.Bytes > 0 and resumed.collections.last_updated == 123)
+resumed.collections.last_updated = 1; d.db = nil
+d:Open(resumed); assert(resumed.collections.last_updated == 1)
+-- Counters are known, finite bounded integers; invalid stores stay untouched.
+for _, counts in ipairs({{Skipped=-1}, {Skipped=0.5}, {Skipped=math.huge},
+ {Skipped=9007199254740992}, {Skipped=0/0}, {Future=1}}) do
+ local badCounts = {Version=1, Events={}, Counts=counts, Bytes=0}
+ local malformed = {sidekick_enabled=true, collections={battlegroundDiagnostics=badCounts, last_updated=1}}
+ assert(d:Open(malformed) == nil and malformed.collections.last_updated == 1)
+ assert(malformed.collections.battlegroundDiagnostics == badCounts)
+end
+d:Open(resumed); pending.Counts.Dropped = 9007199254740991
+resumed.collections.last_updated = 1; d:Count('Dropped')
+assert(pending.Counts.Dropped == 9007199254740991 and resumed.collections.last_updated == 1)
 print('battleground diagnostic tests passed')

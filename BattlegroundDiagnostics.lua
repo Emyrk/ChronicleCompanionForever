@@ -2,6 +2,8 @@ local _, addon = ...
 local d = { registrations = {}, failures = {} }
 addon.BattlegroundDiagnostics = d
 local MAX_EVENTS, MAX_BYTES, MAX_ARGS, MAX_STRING = 20000, 16777216, 64, 8192
+local MAX_COUNT = 9007199254740991
+local countFields = { Dropped=true, Skipped=true, Truncated=true, APIErrors=true, MissingAPIs=true, LegacyDropped=true }
 local recordFields = { Source=true, WallTime=true, Monotonic=true, Presence=true,
     Registration=true, Metadata=true, Args=true, Observations=true, WorldCount=true,
     WorldRows=true, QueueSlots=true, Queues=true, QueueFallback=true }
@@ -28,7 +30,15 @@ local function weight(v, depth)
     return total
 end
 function d:Count(key, n)
-    if self.store then self.store.Counts[key] = math.min(9007199254740991, (self.store.Counts[key] or 0) + (n or 1)) end
+    if self.store and countFields[key] then
+        local before = self.store.Counts[key] or 0
+        local after = math.min(MAX_COUNT, before + (n or 1))
+        if after ~= before then
+            self.store.Counts[key] = after
+            -- Counters can change even when no event is admitted (outside BG).
+            pcall(addon.ScoutingStorage.TouchCollections, self.db)
+        end
+    end
 end
 function d:Raw(...)
     local args = pack(...)
@@ -79,7 +89,7 @@ function d:Block(reason)
     end
 end
 function d:Open(db)
-    if type(db) ~= 'table' or db.sidekick_enabled ~= true then self.store = nil; return end
+    if type(db) ~= 'table' or db.sidekick_enabled ~= true then self.store, self.db, self.container = nil, nil, nil; return end
     if self.db == db and self.container == db.collections then return self.store end
     self.db, self.container, self.store = db, db.collections, nil
     self.started, self.capacity = false, false
@@ -90,7 +100,7 @@ function d:Open(db)
         local size = valid and weight(s, 0)
         if valid then
             for k in pairs(s) do if k ~= 'Version' and k ~= 'Events' and k ~= 'Counts' and k ~= 'Bytes' then valid = false end end
-            for k, v in pairs(s.Counts) do if type(k) ~= 'string' or type(v) ~= 'number' or v < 0 then valid = false end end
+            for k, v in pairs(s.Counts) do if not countFields[k] or type(v) ~= 'number' or v ~= v or v < 0 or v > MAX_COUNT or v % 1 ~= 0 then valid = false end end
             local n = 0
             for k in pairs(s.Events) do
                 n = n + 1
@@ -104,7 +114,11 @@ function d:Open(db)
         end
         if not valid or not size then self:Block('unsupported/malformed diagnostics preserved'); return end
         -- Recompute rather than trusting a persisted budget counter.
-        s.Bytes = weight(s.Events, 0)
+        local bytes = weight(s.Events, 0)
+        if s.Bytes ~= bytes then
+            s.Bytes = bytes
+            pcall(addon.ScoutingStorage.TouchCollections, db)
+        end
     else
         db.collections = db.collections or {}
         s = { Version = 1, Events = {}, Counts = {}, Bytes = 0 }
@@ -141,7 +155,7 @@ end
 function d:Observe(event, ...)
     local db = ChronicleCompanionForeverDB
     -- Preserve a blocked legacy store too: it may be a future schema owned elsewhere.
-    if type(db) ~= 'table' or db.sidekick_enabled ~= true then self.store = nil; return end
+    if type(db) ~= 'table' or db.sidekick_enabled ~= true then self.store, self.db, self.container = nil, nil, nil; return end
     if not self:Open(db) then return end
     local instance = self:API('IsInInstance')
     local inBG = value(instance, 1) == true and value(instance, 2) == 'pvp'
