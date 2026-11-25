@@ -319,8 +319,10 @@ The probe rechecks these exact copied scalars at existing scoreboard probes,
 retries. It separately checks the fields of the retained table (which the client
 could mutate), and fresh rows already read by that scoreboard probe. There are
 **no additional scoreboard API calls, refresh requests or timers**. Fresh row
-comparison requires the same readable GUID/name identity; row position is never
-identity. Unavailable/duplicate identities produce no claimed correlation.
+comparison uses separate readable GUID and name aliases, so a unique name
+retained while GUID was secret still correlates when GUID becomes readable.
+Duplicate aliases remain ambiguous even when the rows have different GUIDs;
+scoreboard baseline identity is unchanged. Row position is never identity. Unavailable/duplicate identities produce no claimed correlation.
 
 Safe summaries are stored as optional `Retention` on the existing bounded
 `collections.battlegroundScoreboard.Probes` entries. Combat-exit checks append a
@@ -341,8 +343,8 @@ only their secrecy label.
 
 `/clog bgstatus` shows the current private sample count (0–3), persisted
 `RetentionChecks` and `RetentionPublic`. The latter counts observations where a
-copied scalar originally marked secret is now marked public, not distinct
-successful declassifications or proof of a supported feature. Zero samples can
+copied scalar originally marked secret is now classified public (not necessarily
+a readable number), not distinct successful declassifications or proof of a supported feature. Zero samples can
 mean no eligible secret/identity was observed. No live outcome is asserted.
 
 For a meaningful capture, **do not `/reload` between sampling and completion**.

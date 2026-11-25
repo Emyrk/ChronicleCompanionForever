@@ -97,4 +97,23 @@ b:Observe('PLAYER_ENTERING_WORLD')
 assert(latest()==nil) -- no past retained samples fabricated on reentry
 safe(db); safe(addon)
 b:Stop()
+-- Live-shaped transition: name fallback at capture, readable GUID at completion.
+local transitionDB={sidekick_enabled=true}
+db=transitionDB
+hidden[token],hidden[other]=true,true
+rows={{name='Alias',guid=token,damageDone=token,healingDone=other},{name='Other',guid='other'}}
+b=load(db); b:Observe('PLAYER_ENTERING_WORLD')
+assert(latest().Samples[1].Initial.damageDone=='secret')
+local capturedRow=rows[1]
+rows={{name='Alias',guid='now-readable',damageDone=55,healingDone=66},{name='Other',guid='other'}}
+b:Observe('PVP_MATCH_COMPLETE')
+sample=latest().Samples[1]
+assert(sample.FreshCorrelation=='readable-identity' and sample.Fresh.damageDone.Value==55)
+assert(sample.Copied.damageDone.Secrecy=='secret' and sample.RetainedTable.damageDone.Secrecy=='secret')
+-- Different readable GUIDs do not make a duplicate name alias unambiguous.
+rows[2]={name='Alias',guid='different-guid',damageDone=77,healingDone=88}
+tick(); sample=latest().Samples[1]
+assert(sample.FreshCorrelation=='unavailable' and sample.Fresh.damageDone.Value==nil)
+assert(sample.Copied.damageDone.Secrecy=='secret')
+b:Stop()
 print('battleground secret retention tests passed')

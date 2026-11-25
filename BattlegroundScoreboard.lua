@@ -281,7 +281,7 @@ function board:Poll(source)
     probe.Filter = filterStatus == 'ok' and self:Scalar(filter) or {Type=filterStatus}
     local n, status = self:API('GetNumBattlefieldScores')
     probe.Count = status == 'ok' and self:Scalar(n) or {Type=status}
-    local updates, seen, fresh = {}, {}, {}
+    local updates, seen, fresh, aliases, ambiguous, candidates = {}, {}, {}, {}, {}, {}
     if status == 'ok' and finite(n) and n >= 0 and n % 1 == 0 then
         if n > MAX_ROWS then probe.Omitted = n - MAX_ROWS; self:Count('Truncated') end
         for i = 1, math.min(n, MAX_ROWS) do
@@ -293,6 +293,17 @@ function board:Poll(source)
                 local current = {}
                 for _, field in ipairs(fields) do current[field] = self:Field(row, field, field) end
                 current.stats = self:Stats(row)
+                -- Retention correlation is separate from baseline identity: a name
+                -- captured while GUID was hidden must still resolve after GUID unlocks.
+                for _, field in ipairs({'guid', 'name'}) do
+                    local item = current[field]
+                    if item.Type == 'string' and item.Value ~= '' then
+                        local alias = field .. ':' .. item.Value
+                        if aliases[alias] or ambiguous[alias] then
+                            aliases[alias], ambiguous[alias] = nil, true
+                        else aliases[alias] = row end
+                    end
+                end
                 local id, kind
                 for _, field in ipairs({'guid', 'name'}) do
                     if current[field].Type == 'string' and current[field].Value ~= '' then id, kind = current[field].Value, field; break end
@@ -312,6 +323,7 @@ function board:Poll(source)
                 else
                     seen[key] = true
                     fresh[key] = row
+                    candidates[#candidates+1] = {Key=key, Row=row}
                     local previous, changed = self.baseline[key], {}
                     for field, v in pairs(current) do if not previous or not same(v, previous[field]) then changed[field] = v end end
                     if next(changed) then
@@ -322,9 +334,11 @@ function board:Poll(source)
             end
         end
     else self:Count('Unavailable') end
-    -- Capture only after duplicate identities have been removed from the fresh map.
-    for key, row in pairs(fresh) do self:Retain(row, key, probe) end
-    probe.Retention = self:CheckRetention(source, probe.At, fresh)
+    -- Stable API row order, excluding any identity that became ambiguous.
+    for _, candidate in ipairs(candidates) do
+        if fresh[candidate.Key] and aliases[candidate.Key] then self:Retain(candidate.Row, candidate.Key, probe) end
+    end
+    probe.Retention = self:CheckRetention(source, probe.At, aliases)
     -- Atomic probe+diff append: rejected writes must not advance replay baselines.
     if self:Append(probe) then for key, row in pairs(updates) do self.baseline[key] = row end end
     local finish = start and profile()
