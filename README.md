@@ -15,11 +15,32 @@ Chronicle Companion Forever starts and stops combat logging automatically so you
 - Enables combat logging and Advanced Combat Logging when you enter an instance.
 - Automatically stops combat logging when you leave the instance.
 - Logs dungeons, raids, arenas, scenarios, and other non-battleground instances.
-- Does not record battlegrounds.
+- Does not combat-log battlegrounds. Optional Sidekick-enabled battleground **collections** retain observed lifecycle, raw objective announcements, and changed world-state snapshots in SavedVariables (not the combat log).
 - Retries after loading screens when WoW Forever temporarily ignores a logging request.
 - Shows a green minimap icon while recording and a red icon when not recording.
 
 Combat logs are written to the game's normal `Logs/WoWCombatLog.txt` location.
+
+Battleground collections require the literal saved setting `sidekick_enabled = true`.
+Experimental bounded raw diagnostics are automatic with that setting; the addon
+does not enable it. Run `/clog bgstatus` before queueing and after the match.
+Exit WoW, then copy `WTF/Account/<ACCOUNT>/SavedVariables/ChronicleCompanionForever.lua`
+**before Sidekick clears collections** (or retain its complete capture artifact).
+Diagnostics live at `ChronicleCompanionForeverDB.collections.battlegroundDiagnostics`.
+Automatic BG scoreboard probes run about every 30 seconds, retain per-player
+absolute field changes and hidden-field availability, plus a bounded private-memory
+secret-retention experiment whose safe summaries test (not assume) later readability.
+Do not `/reload` mid-match for that experiment; allow about 15 seconds after completion.
+These records are captured alongside
+them at `collections.battlegroundScoreboard`; no secret-value bypass is attempted.
+See the [one-match capture checklist](docs/battlegrounds.md#one-match-capture-checklist),
+including optional same-match cross-player instance-ID investigation with
+`/clog bgguid` (target/mouseover events no longer trigger automatic snapshots).
+They preserve raw flag/base evidence where client APIs expose it; they do not infer
+localized objective semantics or actual match start times. See the [battleground
+schema, limits, and unverified Forever API caveats](docs/battlegrounds.md). Pending
+history is never evicted to make space; recording pauses at the documented limit
+until Sidekick captures and clears collections while WoW is closed.
 
 ## Recommended: Chronicle Sidekick
 
