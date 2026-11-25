@@ -28,7 +28,10 @@ Exit WoW, then copy `WTF/Account/<ACCOUNT>/SavedVariables/ChronicleCompanionFore
 **before Sidekick clears collections** (or retain its complete capture artifact).
 Diagnostics live at `ChronicleCompanionForeverDB.collections.battlegroundDiagnostics`.
 Automatic BG scoreboard probes run about every 30 seconds, retain per-player
-absolute field changes and hidden-field availability, and are captured alongside
+absolute field changes and hidden-field availability, plus a bounded private-memory
+secret-retention experiment whose safe summaries test (not assume) later readability.
+Do not `/reload` mid-match for that experiment; allow about 15 seconds after completion.
+These records are captured alongside
 them at `collections.battlegroundScoreboard`; no secret-value bypass is attempted.
 See the [one-match capture checklist](docs/battlegrounds.md#one-match-capture-checklist),
 including optional same-match cross-player instance-ID investigation with

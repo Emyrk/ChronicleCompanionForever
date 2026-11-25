@@ -298,3 +298,57 @@ The user described smooth rendering with network-style delays and subsequently
 suspected their network. Removing gratuitous collector work is precautionary;
 neither an addon cause nor a live lag fix has been established. Deterministic
 operation-count tests verify request bounds and reduced calls, not live performance.
+
+### Secret-retention experiment (testing branch only)
+
+This probe tests an **unknown**, not an assumed capability: whether the *same*
+scalar copied while secret later becomes public. Storing a secret as a local/table
+value does not imply that it will declassify, or that it can be used for arithmetic,
+comparison or serialization. No bypass is attempted.
+
+At up to **three existing scoreboard sampling moments**, while completion has not
+been observed, the module retains one identifiable row's original `damageDone`
+and `healingDone` scalars plus its original API row reference. A sampling moment
+is admitted only if at least one scalar is positively reported secret. Immutable
+sample IDs/timestamps distinguish these copies; later samples never replace them.
+The original values and row references live **only in module-private closure
+memory**, never on the addon export object or in SavedVariables.
+
+The probe rechecks these exact copied scalars at existing scoreboard probes,
+`PLAYER_REGEN_ENABLED` while still in BG, completion, and existing completion
+retries. It separately checks the fields of the retained table (which the client
+could mutate), and fresh rows already read by that scoreboard probe. There are
+**no additional scoreboard API calls, refresh requests or timers**. Fresh row
+comparison requires the same readable GUID/name identity; row position is never
+identity. Unavailable/duplicate identities produce no claimed correlation.
+
+Safe summaries are stored as optional `Retention` on the existing bounded
+`collections.battlegroundScoreboard.Probes` entries. Combat-exit checks append a
+small `Source="retention"` probe under the same 4,000-probe/16 MiB limits. A summary
+contains `Stage`, `CheckedAt`, and at most three `Samples`, each with:
+
+- `ID`, `CapturedAt`, and original `Initial.damageDone/healingDone` secrecy labels;
+- `Copied`, `RetainedTable`, and `Fresh` field results, kept explicitly separate;
+- `FreshCorrelation="readable-identity"` or `"unavailable"`.
+
+Each result contains `Secrecy="secret"`, `"public"`, or `"unavailable"`.
+Only after `issecretvalue` returns **literal false now**, and only for a finite
+ordinary numeric scalar, can a `Value` be copied into the summary. Missing,
+throwing or unexpected checker results fail closed. No secret is stringified,
+formatted, compared with another value, written to SavedVariables, or serialized
+as part of this experiment—even temporarily. Public nonnumeric results retain
+only their secrecy label.
+
+`/clog bgstatus` shows the current private sample count (0–3), persisted
+`RetentionChecks` and `RetentionPublic`. The latter counts observations where a
+copied scalar originally marked secret is now marked public, not distinct
+successful declassifications or proof of a supported feature. Zero samples can
+mean no eligible secret/identity was observed. No live outcome is asserted.
+
+For a meaningful capture, **do not `/reload` between sampling and completion**.
+Remain in the battleground/on the final scoreboard for about **15 seconds after
+completion**, if the client permits, so the three existing retries can check the
+same samples. Exit/disable/reload clears the private buffer; a new observation
+window never fabricates past samples. Then exit WoW completely and preserve the
+full SavedVariables artifact before Sidekick clears it, as above. No retained
+secrets survive that exit; only the safe experimental summaries do.

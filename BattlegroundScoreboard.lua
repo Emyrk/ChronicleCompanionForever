@@ -3,14 +3,38 @@ local board = { generation = 0, baseline = {}, support = {} }
 addon.BattlegroundScoreboard = board
 local MAX_PROBES, MAX_BYTES, MAX_ROWS, MAX_STATS = 4000, 16777216, 120, 32
 local MAX_COUNT = 9007199254740991
+-- Never export these objects: original secret scalars and API row references are
+-- retained only in this module closure, never in addon state or SavedVariables.
+local retained, capturedProbe = {}, nil
+local retentionFields = {'damageDone', 'healingDone'}
+local function secrecy(v)
+    if type(issecretvalue) ~= 'function' then return 'unavailable' end
+    local ok, result = pcall(issecretvalue, v)
+    if not ok then return 'unavailable' end
+    if result == true then return 'secret' end
+    if result == false then return 'public' end
+    return 'unavailable'
+end
+local function retentionValue(v)
+    local result = {Secrecy=secrecy(v)}
+    -- No coercion, comparison, formatting or serialization before literal false.
+    if result.Secrecy == 'public' and type(v) == 'number' and v == v and math.abs(v) < math.huge then result.Value = v end
+    return result
+end
+local function retainedField(row, field)
+    if secrecy(row) ~= 'public' or type(row) ~= 'table' then return nil, 'unavailable' end
+    local ok, v = pcall(function() return row[field] end)
+    if not ok then return nil, 'unavailable' end
+    return v, 'ok'
+end
 local fields = { 'name', 'guid', 'killingBlows', 'honorableKills', 'deaths', 'honorGained',
     'faction', 'raceName', 'gender', 'className', 'classToken', 'damageDone', 'healingDone',
     'rating', 'ratingChange', 'prematchMMR', 'mmrChange', 'postmatchMMR', 'talentSpec',
     'honorLevel', 'roleAssigned' }
 local statFields = { 'pvpStatID', 'pvpStatValue', 'orderIndex', 'name', 'tooltip', 'iconName' }
-local probeFields = { Source=true, Fields=true, Changes=true, Unidentified=true, At=true, Monotonic=true, Request=true, Count=true, Omitted=true, Filter=true, RequestAt=true }
+local probeFields = { Source=true, Fields=true, Changes=true, Unidentified=true, At=true, Monotonic=true, Request=true, Count=true, Omitted=true, Filter=true, RequestAt=true, Retention=true }
 local counters = { Polls=true, Dropped=true, Hidden=true, Unidentified=true, Unavailable=true,
-    Truncated=true, APIErrors=true, MissingAPIs=true, TimerFailures=true, TimedSamples=true, TotalMicros=true, MaxMicros=true, Requests=true }
+    Truncated=true, APIErrors=true, MissingAPIs=true, TimerFailures=true, TimedSamples=true, TotalMicros=true, MaxMicros=true, Requests=true, RetentionChecks=true, RetentionPublic=true }
 local function secret(v)
     if type(issecretvalue) ~= 'function' then return false end
     local ok, result = pcall(issecretvalue, v)
@@ -185,6 +209,53 @@ function board:Stats(row)
     end
     return result
 end
+function board:Retain(row, key, probe)
+    if self.completed or #retained >= 3 or capturedProbe == probe then return end
+    local copied, initial, anySecret = {}, {}, false
+    for _, field in ipairs(retentionFields) do
+        local v, status = retainedField(row, field)
+        local state = status == 'ok' and secrecy(v) or 'unavailable'
+        copied[field], initial[field] = v, state
+        if state == 'secret' then anySecret = true end
+    end
+    -- Only samples actually observed secret during the active observation window
+    -- participate. Missing/throwing checkers cannot accidentally admit values.
+    if not anySecret then return end
+    retained[#retained+1] = {ID=#retained+1, CapturedAt=probe.At, Key=key,
+        Copied=copied, Initial=initial, Row=row}
+    capturedProbe = probe
+end
+function board:CheckRetention(stage, at, fresh)
+    if #retained == 0 then return nil end
+    local output = {Stage=stage, CheckedAt=at, Samples={}}
+    for _, sample in ipairs(retained) do
+        local saved = {ID=sample.ID, CapturedAt=sample.CapturedAt, Initial=sample.Initial,
+            Copied={}, RetainedTable={}, Fresh={}, FreshCorrelation='unavailable'}
+        local current = fresh and fresh[sample.Key]
+        if current then saved.FreshCorrelation = 'readable-identity' end
+        for _, field in ipairs(retentionFields) do
+            saved.Copied[field] = retentionValue(sample.Copied[field])
+            local v, status = retainedField(sample.Row, field)
+            saved.RetainedTable[field] = status == 'ok' and retentionValue(v) or {Secrecy='unavailable'}
+            v, status = retainedField(current, field)
+            saved.Fresh[field] = status == 'ok' and retentionValue(v) or {Secrecy='unavailable'}
+            if sample.Initial[field] == 'secret' and saved.Copied[field].Secrecy == 'public' then self:Count('RetentionPublic') end
+        end
+        output.Samples[#output.Samples+1] = saved
+    end
+    self:Count('RetentionChecks')
+    return output
+end
+function board:RetentionOnly(stage)
+    if not self.store or #retained == 0 then return end
+    self.batching = true
+    local at, status = self:API('time')
+    local timestamp = status == 'ok' and self:Scalar(at) or {Type=status}
+    local result = self:CheckRetention(stage, timestamp)
+    self:Append({Source='retention', At=timestamp, Retention=result})
+    self.batching = false
+    if self.dirty then self.dirty = false; self:Touch() end
+end
 function board:Poll(source)
     if self.busy then return end
     self.busy, self.batching = true, true
@@ -210,7 +281,7 @@ function board:Poll(source)
     probe.Filter = filterStatus == 'ok' and self:Scalar(filter) or {Type=filterStatus}
     local n, status = self:API('GetNumBattlefieldScores')
     probe.Count = status == 'ok' and self:Scalar(n) or {Type=status}
-    local updates, seen = {}, {}
+    local updates, seen, fresh = {}, {}, {}
     if status == 'ok' and finite(n) and n >= 0 and n % 1 == 0 then
         if n > MAX_ROWS then probe.Omitted = n - MAX_ROWS; self:Count('Truncated') end
         for i = 1, math.min(n, MAX_ROWS) do
@@ -229,7 +300,7 @@ function board:Poll(source)
                 local key = id and (kind .. ':' .. id)
                 if key and seen[key] then
                     -- Even the first row is ambiguous when a fallback identity repeats.
-                    updates[key] = nil
+                    updates[key], fresh[key] = nil, nil
                     for j = #probe.Changes, 1, -1 do
                         local change = probe.Changes[j]
                         if change.IdentityKind == kind and change.Identity == id then table.remove(probe.Changes, j) end
@@ -240,6 +311,7 @@ function board:Poll(source)
                     self:Count('Unidentified')
                 else
                     seen[key] = true
+                    fresh[key] = row
                     local previous, changed = self.baseline[key], {}
                     for field, v in pairs(current) do if not previous or not same(v, previous[field]) then changed[field] = v end end
                     if next(changed) then
@@ -250,6 +322,9 @@ function board:Poll(source)
             end
         end
     else self:Count('Unavailable') end
+    -- Capture only after duplicate identities have been removed from the fresh map.
+    for key, row in pairs(fresh) do self:Retain(row, key, probe) end
+    probe.Retention = self:CheckRetention(source, probe.At, fresh)
     -- Atomic probe+diff append: rejected writes must not advance replay baselines.
     if self:Append(probe) then for key, row in pairs(updates) do self.baseline[key] = row end end
     local finish = start and profile()
@@ -264,6 +339,7 @@ function board:Poll(source)
     if self.dirty then self.dirty = false; self:Touch() end
 end
 function board:Stop()
+    retained, capturedProbe = {}, nil
     self.generation = self.generation + 1
     if self.timer then pcall(function() self.timer:Cancel() end) end
     self.timer, self.active, self.baseline, self.lastPoll, self.completed, self.retries = nil, false, {}, nil, false, 0
@@ -292,6 +368,7 @@ function board:Observe(source, due)
     if type(db) ~= 'table' or db.sidekick_enabled ~= true then self:Stop(); return end
     if source == 'UPDATE_BATTLEFIELD_SCORE' and self.active and self.timer then return end
     if not self:Present() then self:Stop(); return end
+    if source == 'PLAYER_REGEN_ENABLED' then self:RetentionOnly('combat_exit'); return end
     if not self:Open(db) then
         if not self.blockWarned and DEFAULT_CHAT_FRAME then
             DEFAULT_CHAT_FRAME:AddMessage('Chronicle BG scoreboard: ' .. (self.blocked or 'unavailable') .. '; recording paused.')
@@ -318,18 +395,19 @@ function board:Status()
         self.blocked or (self.active and 'active' or 'inactive'), s and #s.Probes or 0, MAX_PROBES, s and s.Bytes or 0, MAX_BYTES) }
     if s then
         local parts = {}
-        for _, key in ipairs({'Polls','Dropped','Hidden','Unidentified','Unavailable','Truncated','APIErrors','MissingAPIs','TimerFailures','TimedSamples','TotalMicros','MaxMicros','Requests'}) do parts[#parts+1] = key .. '=' .. (s.Counts[key] or 0) end
+        for _, key in ipairs({'Polls','Dropped','Hidden','Unidentified','Unavailable','Truncated','APIErrors','MissingAPIs','TimerFailures','TimedSamples','TotalMicros','MaxMicros','Requests','RetentionChecks','RetentionPublic'}) do parts[#parts+1] = key .. '=' .. (s.Counts[key] or 0) end
         lines[#lines+1] = table.concat(parts, ' ')
     end
     for _, name in ipairs({'IsInInstance','GetNumBattlefieldScores','C_PvP.GetScoreInfo','GetBattlefieldScoreFaction','RequestBattlefieldScoreData','C_Timer.NewTimer'}) do
         lines[#lines+1] = name .. ': ' .. (self.support[name] or (type(resolve(name)) == 'function' and 'available (not probed)' or 'missing'))
     end
+    lines[#lines+1] = 'Secret retention experiment: in-memory samples=' .. #retained .. '/3 (cleared on exit/disable/reload)'
     if self.support.Timer then lines[#lines+1] = 'Scoreboard timer: ' .. self.support.Timer end
     for _, line in ipairs(lines) do if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(line) end end
     return lines
 end
 local frame = CreateFrame('Frame')
-for _, event in ipairs({'PLAYER_ENTERING_WORLD','PLAYER_LEAVING_WORLD','ZONE_CHANGED_NEW_AREA','UPDATE_BATTLEFIELD_STATUS','UPDATE_BATTLEFIELD_SCORE','PVP_MATCH_COMPLETE'}) do
+for _, event in ipairs({'PLAYER_ENTERING_WORLD','PLAYER_LEAVING_WORLD','ZONE_CHANGED_NEW_AREA','UPDATE_BATTLEFIELD_STATUS','UPDATE_BATTLEFIELD_SCORE','PVP_MATCH_COMPLETE','PLAYER_REGEN_ENABLED'}) do
     if addon.BattlegroundDiagnostics then addon.BattlegroundDiagnostics:Register(frame, event) else pcall(frame.RegisterEvent, frame, event) end
 end
 frame:SetScript('OnEvent', function(_, event) board:Observe(event) end)
