@@ -1,12 +1,12 @@
 local _, addon = ...
-local d = { registrations = {}, failures = {} }
+local d = { registrations = {}, failures = {}, missing = {} }
 addon.BattlegroundDiagnostics = d
 local MAX_EVENTS, MAX_BYTES, MAX_ARGS, MAX_STRING = 20000, 16777216, 64, 8192
 local MAX_COUNT = 9007199254740991
-local countFields = { Dropped=true, Skipped=true, Truncated=true, APIErrors=true, MissingAPIs=true, LegacyDropped=true }
+local countFields = { Dropped=true, Skipped=true, Truncated=true, APIErrors=true, MissingAPIs=true, LegacyDropped=true, TimedSamples=true, TotalMicros=true, MaxMicros=true }
 local recordFields = { Source=true, WallTime=true, Monotonic=true, Presence=true,
     Registration=true, Metadata=true, Args=true, Observations=true, WorldCount=true,
-    WorldRows=true, QueueSlots=true, Queues=true, QueueFallback=true }
+    WorldRows=true, QueueSlots=true, Queues=true, QueueFallback=true, GUIDSamples=true }
 local unpackValues = unpack or table.unpack
 local function pack(...) return { n = select('#', ...), ... } end
 local function secret(v)
@@ -29,14 +29,36 @@ local function weight(v, depth)
     end
     return total
 end
+local function profile()
+    local fn = debugprofilestop
+    if type(fn) ~= 'function' then return end
+    local ok, v = pcall(fn)
+    if ok and not secret(v) and type(v) == 'number' and v == v and math.abs(v) < math.huge then
+        return v
+    end
+end
+function d:Flush()
+    if self.dirty and self.store then
+        self.dirty = false
+        local ok = pcall(addon.ScoutingStorage.TouchCollections, self.db)
+        if not ok then self.failures.TouchCollections = 'error' end
+    end
+end
+function d:Timing(start)
+    local finish = start and profile()
+    if not finish or finish < start then return end
+    local micros = math.min(MAX_COUNT, math.floor((finish - start) * 1000))
+    self:Count('TimedSamples'); self:Count('TotalMicros', micros)
+    if micros > (self.store.Counts.MaxMicros or 0) then self.store.Counts.MaxMicros = micros; self.dirty = true end
+end
 function d:Count(key, n)
     if self.store and countFields[key] then
         local before = self.store.Counts[key] or 0
         local after = math.min(MAX_COUNT, before + (n or 1))
         if after ~= before then
             self.store.Counts[key] = after
-            -- Counters can change even when no event is admitted (outside BG).
-            pcall(addon.ScoutingStorage.TouchCollections, self.db)
+            self.dirty = true
+            if not self.batching then self:Flush() end
         end
     end
 end
@@ -65,11 +87,16 @@ local function resolve(name)
 end
 function d:API(name, ...)
     local fn = resolve(name)
+    local key = name
+    if name == 'GetBattlefieldStatus' or name == 'GetWorldStateUIInfo' or name == 'UnitGUID' then key = name .. ':' .. select(1, ...) end
+    if type(fn) ~= 'function' and self.missing[key] then return self.missing[key] end
     local observation = { API = name, Args = self:Raw(...) }
     if type(fn) ~= 'function' then
         observation.Status = 'missing'; self:Count('MissingAPIs'); self.failures[name] = 'missing'
+        self.missing[key] = observation
         return observation
     end
+    self.missing[key] = nil
     local results = pack(pcall(fn, ...))
     if not results[1] then
         observation.Status, observation.Error = 'error', self:Raw(results[2])
@@ -92,7 +119,7 @@ function d:Open(db)
     if type(db) ~= 'table' or db.sidekick_enabled ~= true then self.store, self.db, self.container = nil, nil, nil; return end
     if self.db == db and self.container == db.collections then return self.store end
     self.db, self.container, self.store = db, db.collections, nil
-    self.started, self.capacity = false, false
+    self.started, self.capacity, self.lastSnapshot = false, false, nil
     if db.collections ~= nil and type(db.collections) ~= 'table' then self:Block('malformed collections'); return end
     local s = db.collections and db.collections.battlegroundDiagnostics
     if s ~= nil then
@@ -144,8 +171,8 @@ function d:Append(record)
         s.Events[#s.Events + 1] = record
         s.Bytes = s.Bytes + bytes + 8
     end
-    local ok = pcall(addon.ScoutingStorage.TouchCollections, self.db)
-    if not ok then self:Count("APIErrors"); self.failures.TouchCollections = "error" end
+    self.dirty = true
+    if not self.batching then self:Flush() end
 end
 function d:Register(frame, event)
     local ok, result = pcall(frame.RegisterEvent, frame, event)
@@ -153,22 +180,35 @@ function d:Register(frame, event)
         Result = self:Raw(result) }
 end
 function d:Observe(event, ...)
+    -- These hot events are deliberately not registered; do not collect if manually dispatched either.
+    if event == 'PLAYER_TARGET_CHANGED' or event == 'UPDATE_MOUSEOVER_UNIT' then return end
     local db = ChronicleCompanionForeverDB
     -- Preserve a blocked legacy store too: it may be a future schema owned elsewhere.
     if type(db) ~= 'table' or db.sidekick_enabled ~= true then self.store, self.db, self.container = nil, nil, nil; return end
     if not self:Open(db) then return end
+    self.batching = true
+    local start = profile()
     local instance = self:API('IsInInstance')
     local inBG = value(instance, 1) == true and value(instance, 2) == 'pvp'
     -- Announcement args are never retained outside an observed battleground.
-    if (self.announcements[event] or event == 'PLAYER_TARGET_CHANGED' or event == 'UPDATE_MOUSEOVER_UNIT') and not inBG then return end
+    if (self.announcements[event] or event == 'manual_guid') and not inBG then self.batching = false; self:Flush(); return end
     local record = { Source = event, WallTime = self:API('time'), Monotonic = self:API('GetTime'), Presence = instance }
     if not self.started then
         record.Registration = self.registrations
         record.Metadata = { self:API('GetBuildInfo'), self:API('GetLocale'), self:API('UnitGUID', 'player'), self:API('UnitName', 'player') }
         self.started = true
     end
-    if inBG then
-        record.Args = self:Raw(...)
+    local now = value(record.Monotonic, 1)
+    local lifecycle = event == 'PLAYER_ENTERING_WORLD' or event == 'ZONE_CHANGED_NEW_AREA' or event == 'PVP_MATCH_COMPLETE'
+    local full = inBG and event ~= 'manual_guid' and (not self.lastSnapshot or lifecycle or
+        (type(now) == 'number' and now - self.lastSnapshot >= 30))
+    if not inBG then self.lastSnapshot = nil end
+    if event == 'manual_guid' then
+        record.GUIDSamples = { self:API('UnitGUID', 'player'), self:API('UnitGUID', 'target'), self:API('UnitGUID', 'mouseover') }
+    end
+    if inBG then record.Args = self:Raw(...) end
+    if full then
+        self.lastSnapshot = type(now) == 'number' and now or math.huge
         record.Observations = { self:API('GetInstanceInfo'), self:API('GetBattlefieldWinner'),
             self:API('C_PvP.GetActiveMatchState'), self:API('C_PvP.GetActiveMatchDuration'),
             self:API('UnitGUID', 'player'), self:API('UnitGUID', 'target'), self:API('UnitGUID', 'mouseover') }
@@ -186,7 +226,10 @@ function d:Observe(event, ...)
         if n > 16 then self:Count('Truncated') end
         for i = 1, math.min(n, 16) do record.Queues[i] = self:API('GetBattlefieldStatus', i) end
     end
+    self:Timing(start)
     self:Append(record)
+    self.batching = false
+    self:Flush()
 end
 function d:Status()
     local db = ChronicleCompanionForeverDB
@@ -198,7 +241,7 @@ function d:Status()
     lines[#lines + 1] = ('Diagnostics events=%d/%d weight=%d/%d (not file bytes)'):format(s and #s.Events or 0, MAX_EVENTS, s and s.Bytes or 0, MAX_BYTES)
     if s then
         local counts = {}
-        for _, k in ipairs({'Dropped','Skipped','Truncated','APIErrors','MissingAPIs','LegacyDropped'}) do counts[#counts+1] = k .. '=' .. (s.Counts[k] or 0) end
+        for _, k in ipairs({'Dropped','Skipped','Truncated','APIErrors','MissingAPIs','LegacyDropped','TimedSamples','TotalMicros','MaxMicros'}) do counts[#counts+1] = k .. '=' .. (s.Counts[k] or 0) end
         lines[#lines+1] = table.concat(counts, ' ')
     end
     local legacy = type(db) == 'table' and type(db.collections) == 'table' and db.collections.battlegrounds
@@ -224,6 +267,7 @@ if SlashCmdList then
     local previous = SlashCmdList.CHRONICLEFOREVER
     SlashCmdList.CHRONICLEFOREVER = function(message)
         if (message or ''):lower():match('^%s*bgstatus%s*$') then d:Status()
+        elseif (message or ''):lower():match('^%s*bgguid%s*$') then d:Observe('manual_guid')
         elseif previous then previous(message) end
     end
 end

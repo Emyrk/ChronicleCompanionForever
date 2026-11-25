@@ -8,9 +8,9 @@ local fields = { 'name', 'guid', 'killingBlows', 'honorableKills', 'deaths', 'ho
     'rating', 'ratingChange', 'prematchMMR', 'mmrChange', 'postmatchMMR', 'talentSpec',
     'honorLevel', 'roleAssigned' }
 local statFields = { 'pvpStatID', 'pvpStatValue', 'orderIndex', 'name', 'tooltip', 'iconName' }
-local probeFields = { Source=true, Fields=true, Changes=true, Unidentified=true, At=true, Monotonic=true, Request=true, Count=true, Omitted=true, Filter=true }
+local probeFields = { Source=true, Fields=true, Changes=true, Unidentified=true, At=true, Monotonic=true, Request=true, Count=true, Omitted=true, Filter=true, RequestAt=true }
 local counters = { Polls=true, Dropped=true, Hidden=true, Unidentified=true, Unavailable=true,
-    Truncated=true, APIErrors=true, MissingAPIs=true, TimerFailures=true }
+    Truncated=true, APIErrors=true, MissingAPIs=true, TimerFailures=true, TimedSamples=true, TotalMicros=true, MaxMicros=true, Requests=true }
 local function secret(v)
     if type(issecretvalue) ~= 'function' then return false end
     local ok, result = pcall(issecretvalue, v)
@@ -42,7 +42,13 @@ local function same(a, b)
     return true
 end
 function board:Touch()
-    pcall(addon.ScoutingStorage.TouchCollections, self.db)
+    if self.batching then self.dirty = true; return end
+    if self.db and self.db.sidekick_enabled == true then pcall(addon.ScoutingStorage.TouchCollections, self.db) end
+end
+local function profile()
+    if type(debugprofilestop) ~= 'function' then return end
+    local ok, v = pcall(debugprofilestop)
+    if ok and finite(v) then return v end
 end
 function board:Count(key)
     if not self.store then return end
@@ -90,7 +96,10 @@ local function resolve(name)
 end
 function board:API(name, ...)
     local fn = resolve(name)
-    if type(fn) ~= 'function' then self.support[name] = 'missing'; self:Count('MissingAPIs'); return nil, 'missing' end
+    if type(fn) ~= 'function' then
+        if self.support[name] ~= 'missing' then self:Count('MissingAPIs') end
+        self.support[name] = 'missing'; return nil, 'missing'
+    end
     local ok, a, b = pcall(fn, ...)
     if not ok then self.support[name] = 'error'; self:Count('APIErrors'); return nil, 'error' end
     self.support[name] = 'ok'
@@ -178,7 +187,8 @@ function board:Stats(row)
 end
 function board:Poll(source)
     if self.busy then return end
-    self.busy = true
+    self.busy, self.batching = true, true
+    local start = profile()
     local probe = {Source=source, Fields={}, Changes={}, Unidentified={}}
     self.probe = probe
     self:Count('Polls')
@@ -187,8 +197,15 @@ function board:Poll(source)
     probe.At, probe.Monotonic = atStatus == 'ok' and self:Scalar(at) or {Type=atStatus}, monoStatus == 'ok' and self:Scalar(mono) or {Type=monoStatus}
     self.lastPoll = finite(mono) and mono or nil
     -- Refresh only at admitted cadence; synchronous score events cannot recurse.
-    local _, requestStatus = self:API('RequestBattlefieldScoreData')
-    probe.Request = requestStatus
+    -- Completion retries read cached rows; never increase refresh request cadence.
+    local requestDue = not self.requested or (finite(mono) and self.lastRequest and mono - self.lastRequest >= 30)
+    probe.Request = 'throttled'
+    if requestDue then
+        self.requested, self.lastRequest = true, finite(mono) and mono or nil
+        if type(resolve('RequestBattlefieldScoreData')) == 'function' then self:Count('Requests') end
+        local _, requestStatus = self:API('RequestBattlefieldScoreData')
+        probe.Request, probe.RequestAt = requestStatus, probe.Monotonic
+    end
     local filter, filterStatus = self:API('GetBattlefieldScoreFaction')
     probe.Filter = filterStatus == 'ok' and self:Scalar(filter) or {Type=filterStatus}
     local n, status = self:API('GetNumBattlefieldScores')
@@ -235,7 +252,16 @@ function board:Poll(source)
     else self:Count('Unavailable') end
     -- Atomic probe+diff append: rejected writes must not advance replay baselines.
     if self:Append(probe) then for key, row in pairs(updates) do self.baseline[key] = row end end
-    self.probe, self.busy = nil, false
+    local finish = start and profile()
+    if finish and finish >= start then
+        local micros = math.min(MAX_COUNT, math.floor((finish - start) * 1000))
+        self:Count('TimedSamples')
+        self.store.Counts.TotalMicros = math.min(MAX_COUNT, (self.store.Counts.TotalMicros or 0) + micros)
+        self.store.Counts.MaxMicros = math.max(self.store.Counts.MaxMicros or 0, micros)
+        self.dirty = true
+    end
+    self.probe, self.busy, self.batching = nil, false, false
+    if self.dirty then self.dirty = false; self:Touch() end
 end
 function board:Stop()
     self.generation = self.generation + 1
@@ -264,6 +290,7 @@ function board:Observe(source, due)
     -- Clear the store before support probes so disabled/late callbacks cannot mutate it.
     local db = ChronicleCompanionForeverDB
     if type(db) ~= 'table' or db.sidekick_enabled ~= true then self:Stop(); return end
+    if source == 'UPDATE_BATTLEFIELD_SCORE' and self.active and self.timer then return end
     if not self:Present() then self:Stop(); return end
     if not self:Open(db) then
         if not self.blockWarned and DEFAULT_CHAT_FRAME then
@@ -291,7 +318,7 @@ function board:Status()
         self.blocked or (self.active and 'active' or 'inactive'), s and #s.Probes or 0, MAX_PROBES, s and s.Bytes or 0, MAX_BYTES) }
     if s then
         local parts = {}
-        for _, key in ipairs({'Polls','Dropped','Hidden','Unidentified','Unavailable','Truncated','APIErrors','MissingAPIs','TimerFailures'}) do parts[#parts+1] = key .. '=' .. (s.Counts[key] or 0) end
+        for _, key in ipairs({'Polls','Dropped','Hidden','Unidentified','Unavailable','Truncated','APIErrors','MissingAPIs','TimerFailures','TimedSamples','TotalMicros','MaxMicros','Requests'}) do parts[#parts+1] = key .. '=' .. (s.Counts[key] or 0) end
         lines[#lines+1] = table.concat(parts, ' ')
     end
     for _, name in ipairs({'IsInInstance','GetNumBattlefieldScores','C_PvP.GetScoreInfo','GetBattlefieldScoreFaction','RequestBattlefieldScoreData','C_Timer.NewTimer'}) do

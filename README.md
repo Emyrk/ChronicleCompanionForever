@@ -31,7 +31,8 @@ Automatic BG scoreboard probes run about every 30 seconds, retain per-player
 absolute field changes and hidden-field availability, and are captured alongside
 them at `collections.battlegroundScoreboard`; no secret-value bypass is attempted.
 See the [one-match capture checklist](docs/battlegrounds.md#one-match-capture-checklist),
-including optional same-match cross-player instance-ID investigation.
+including optional same-match cross-player instance-ID investigation with
+`/clog bgguid` (target/mouseover events no longer trigger automatic snapshots).
 They preserve raw flag/base evidence where client APIs expose it; they do not infer
 localized objective semantics or actual match start times. See the [battleground
 schema, limits, and unverified Forever API caveats](docs/battlegrounds.md). Pending

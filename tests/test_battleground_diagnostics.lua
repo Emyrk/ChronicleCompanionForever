@@ -12,7 +12,8 @@ end
 local inside, kind = false, 'none'
 function IsInInstance() return inside, kind end
 function time() return 123 end
-function GetTime() return 4.5 end
+local monotonic = 4.5
+function GetTime() return monotonic end
 function GetBuildInfo() return 'Forever', '12345', nil, 16001 end
 function GetLocale() return 'enUS' end
 function UnitGUID(unit) return unit == 'player' and 'Player-1' or 'Creature-0-1-2-3-4' end
@@ -26,7 +27,7 @@ assert(loadfile('ScoutingStorage.lua'))('test', addon)
 assert(loadfile('BattlegroundDiagnostics.lua'))('test', addon)
 assert(loadfile('Battlegrounds.lua'))('test', addon)
 local d = addon.BattlegroundDiagnostics
-local function fire(e, ...) frames[1].run(nil, e or 'PLAYER_ENTERING_WORLD', ...) end
+local function fire(e, ...) frames[1].run(nil, e or 'PLAYER_ENTERING_WORLD', ...); monotonic = monotonic + 30 end
 -- Safe pre-init routing and no disabled mutations, including literal truthy values.
 SlashCmdList.CHRONICLEFOREVER('bgstatus')
 SlashCmdList.CHRONICLEFOREVER('on'); assert(forwarded == 1)
@@ -55,7 +56,7 @@ assert(e.Args.Values[5].Type == 'unsupported' and s.Counts.Skipped == 1)
 assert(e.Observations[1].Returns.Values[8].Value == 489)
 assert(e.Queues[1].Returns.n == 5 and e.Queues[1].Returns.Values[3].Value == 13)
 assert(e.QueueFallback and #e.Queues == 3)
-assert(e.Monotonic.Returns.Values[1].Value == 4.5 and e.WallTime.Returns.Values[1].Value == 123)
+assert(type(e.Monotonic.Returns.Values[1].Value) == 'number' and e.WallTime.Returns.Values[1].Value == 123)
 assert(e.Observations[3].Status == 'missing')
 assert(db.collections.scouting == sibling and db.collections.future == sibling)
 function issecretvalue(v) return v == 'secret' end

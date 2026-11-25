@@ -84,7 +84,7 @@ tick(); assert(#s.Probes[#s.Probes].Changes == 0 and b.baseline['name:Collision'
 rows={{guid='guid-a',name='Alpha',damageDone=16,healingDone=nil,deaths=0}}
 tick(); assert(not s.Probes[#s.Probes].Changes[1].Baseline)
 -- Completion triggers one immediate probe and three bounded five-second retries.
-winner=0; fire('UPDATE_BATTLEFIELD_SCORE')
+winner=0; fire('PVP_MATCH_COMPLETE')
 local completion=#s.Probes
 assert(s.Probes[completion].Source == 'completion' and timers[#timers].delay == 5)
 fire('UPDATE_BATTLEFIELD_SCORE'); assert(#s.Probes == completion)

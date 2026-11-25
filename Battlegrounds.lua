@@ -169,7 +169,7 @@ function collector:Event(event, ...)
 		if self:Append({ Kind = "completion_observed", Winner = winner }, at) then self.winner = winner end
 	end
 end
-for _, event in ipairs({ "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "PLAYER_TARGET_CHANGED", "UPDATE_MOUSEOVER_UNIT", "UPDATE_WORLD_STATES", "UPDATE_BATTLEFIELD_STATUS", "UPDATE_BATTLEFIELD_SCORE", "CHAT_MSG_BG_SYSTEM_ALLIANCE", "CHAT_MSG_BG_SYSTEM_HORDE", "CHAT_MSG_BG_SYSTEM_NEUTRAL" }) do
+for _, event in ipairs({ "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "UPDATE_WORLD_STATES", "UPDATE_BATTLEFIELD_STATUS", "UPDATE_BATTLEFIELD_SCORE", "CHAT_MSG_BG_SYSTEM_ALLIANCE", "CHAT_MSG_BG_SYSTEM_HORDE", "CHAT_MSG_BG_SYSTEM_NEUTRAL" }) do
 	if addon.BattlegroundDiagnostics then addon.BattlegroundDiagnostics:Register(frame, event) else pcall(frame.RegisterEvent, frame, event) end
 end
 if addon.BattlegroundDiagnostics then

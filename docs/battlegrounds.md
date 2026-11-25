@@ -20,8 +20,8 @@ The existing combat logger continues to exclude battlegrounds.
    When enabled it may initialize diagnostic storage. Missing optional APIs are
    expected, not evidence that the remaining collector is broken.
 2. Play a battleground normally. Run `/clog bgstatus` inside and after the match;
-   retain screenshots/text of any warnings. Target a recognizable BG NPC (and/or
-   mouse over it) to capture raw GUID candidates. If possible, have another enabled
+   retain screenshots/text of any warnings. Target a recognizable BG NPC and run `/clog bgguid` to capture raw GUID
+   candidates once (player, target and mouseover). If possible, have another enabled
    player in the **same match** target the **same NPC** and collect their artifact
    too. Note approximate real time, map, locale, character, result and NPC identity.
 3. **Exit WoW completely** to flush SavedVariables. Do not rely on copying the file
@@ -73,10 +73,13 @@ Candidate announcements are recorded **without semantic interpretation**:
 
 Other triggers are `PLAYER_ENTERING_WORLD`, `ZONE_CHANGED_NEW_AREA`,
 `UPDATE_WORLD_STATES`, `UPDATE_BATTLEFIELD_STATUS`, `UPDATE_BATTLEFIELD_SCORE`,
-`PLAYER_TARGET_CHANGED` and `UPDATE_MOUSEOVER_UNIT`. Target/mouseover triggers
-only store diagnostic records in BG. No timer, tight polling, or scoreboard
-requests are used. Every admitted BG event includes snapshots so a message can be
-interpreted alongside contemporaneous API evidence, including unchanged states:
+`PVP_MATCH_COMPLETE` where supported by the scoreboard collector. Target and
+mouseover events are no longer registered: `/clog bgguid` explicitly captures a
+small GUID-only diagnostic record in BG. Broad diagnostic snapshots occur on
+world/zone lifecycle observations or the first subsequent event at least 30 seconds
+after the previous snapshot. Every announcement still retains its exact raw args,
+source, wall/monotonic time and presence; messages are never throttled. Snapshot
+fields are omitted between broad probes, not asserted unavailable:
 
 - All raw `GetInstanceInfo()` returns: name, type and conventional eighth return
   map/instance ID are candidates, **not a unique match identifier**.
@@ -121,8 +124,8 @@ units**, reserving 4,096 units for bookkeeping. `Bytes` is recursive key/value
 weight, not serialized file size or Lua heap usage. Counters are bounded numbers:
 `Dropped` (record capacity), `Skipped` (unsupported/secret values or unusable
 world count), `Truncated` (oversized values/rows/slots), `APIErrors`, `MissingAPIs`,
-and `LegacyDropped` (legacy event capacity). These count observations, not distinct
-API names; they can continue increasing when record storage is full. Raw records
+and `LegacyDropped` (legacy event capacity). Missing-API diagnostics are cached by API/argument and counted once per
+load until the API becomes available; other counters count observations; they can continue increasing when record storage is full. Raw records
 are never evicted. Capacity warns once per load and `/clog bgstatus` summarizes
 counts/caps. A long/noisy match or existing backlog can still exhaust storage;
 this is not a lossless guarantee. Registration failures are retained separately
@@ -174,8 +177,10 @@ probe metadata distinguishes those cases without trying to defeat restrictions.
 An observed BG entry starts an immediate baseline probe and one cancellable
 30-second timer. Each timer verifies the Sidekick/BG gates before sampling and
 rescheduling. Repeated zone/score events do not create duplicate timers.
-`UPDATE_BATTLEFIELD_SCORE` may sample if 30 seconds have elapsed since the last
-probe. Each admitted probe optionally calls `RequestBattlefieldScoreData()` once;
+`UPDATE_BATTLEFIELD_SCORE` responses are ignored by the scoreboard sampler while
+a timer is active; without a timer they may sample after 30 elapsed seconds.
+`RequestBattlefieldScoreData()` is invoked at most once per 30 seconds across
+normal and completion probes; without a clock it is attempted only once per load;
 synchronous update events cannot recursively trigger probes. The sampled rows are
 the currently available client cache; a refresh response may arrive asynchronously
 and appear in a later probe. This does not promise a server snapshot at exact
@@ -184,7 +189,7 @@ changed. Missing timers are reported; elapsed-time-gated score events can still
 provide observations if a monotonic clock is available.
 
 `PVP_MATCH_COMPLETE` or a readable conventional winner code (0/1/2) triggers one
-immediate completion probe and at most **three five-second retries**, only while
+immediate completion read and at most **three five-second read retries**, only while
 still in BG. Then ordinary 30-second cadence resumes. No hidden winner value is
 compared. Leaving the world, leaving BG or noticing disabled Sidekick cancels the
 timer and clears in-memory baselines. Late cancelled callbacks cannot append.
@@ -244,7 +249,10 @@ Capacity never evicts pending evidence. The entire probe and its changes append
 atomically; a rejected probe does **not** advance player baselines. Counters still
 show attempted polling and drops. `Counts` contains bounded integer counters:
 `Polls`, `Dropped`, `Hidden`, `Unidentified`, `Unavailable`, `Truncated`, `APIErrors`,
-`MissingAPIs`, `TimerFailures`. Hidden counts are observations, not distinct fields
+`MissingAPIs`, `TimerFailures`, `Requests`, `TimedSamples`, `TotalMicros`, `MaxMicros`.
+`Requests` counts actual request API invocations (including failures), separately
+from `Polls`/row reads. Each probe records request status (`throttled` when skipped)
+and `RequestAt` when attempted. Completion retries do not raise request cadence. Hidden counts are observations, not distinct fields
 or players. Unknown/malformed scoreboard stores are preserved with a warning.
 Other collection siblings and combat logging remain untouched.
 
@@ -253,3 +261,40 @@ a successful test may establish that mid-match fields are restricted and only
 become readable at completion. Capturing a full match including a short stay on
 the final scoreboard gives the bounded completion retries an opportunity to
 observe that transition. No live field availability is guaranteed by mock tests.
+
+
+### Overhead cleanup and timing evidence
+
+Target/mouseover event bursts now perform **zero collector API calls**, because
+neither the legacy nor raw diagnostic collector registers those events. Use
+`/clog bgguid` when GUID evidence is needed; no extra opt-in is required for normal
+collection. Broad diagnostic snapshots are limited as described above; raw
+announcements are not throttled. Missing APIs are cached rather than repeatedly
+counted/allocated. Counter mutations and record appends share one timestamp touch
+per diagnostic observation or scoreboard probe, rather than one per hidden field.
+
+Both collectors optionally summarize local sample durations from
+`debugprofilestop()` in bounded `Counts.TimedSamples`, `TotalMicros`, `MaxMicros`.
+The diagnostic measurement covers preparation before append; scoreboard measurement
+includes its append but excludes the final timestamp flush. These are local
+execution-duration evidence, **not network RTT**. `GetTime()` remains scheduling
+and observation-time evidence, not a fallback CPU measurement. Missing profiling
+APIs simply omit duration counters. Request outcomes/timestamps are separate from
+CPU-duration counters. No network tracing or extra server requests are introduced.
+
+### Findings from the supplied captures (not universal API guarantees)
+
+On the reported Forever **1.60.1 build 71091 enUS** client, the old world-state
+API/event were unavailable. The second capture contained 14 scoreboard probes
+at 30-second cadence and 347 row observations: score tables were readable, but
+combat totals, GUIDs, specialization/rating and objective numerical fields were
+secret; names, faction/classes and objective labels were readable. There was no
+second-match completion/exit in that artifact, so postmatch visibility remains
+unverified. The cumulative diagnostic stream across two matches contained 1,759
+records, including 1,354 mouseover and 251 target events; those are **not all new
+records from the second match**. No personal capture data is committed here.
+
+The user described smooth rendering with network-style delays and subsequently
+suspected their network. Removing gratuitous collector work is precautionary;
+neither an addon cause nor a live lag fix has been established. Deterministic
+operation-count tests verify request bounds and reduced calls, not live performance.
